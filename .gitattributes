@@ -1,0 +1,10 @@
+# Normalize line endings across machines (Windows <-> others)
+* text=auto eol=lf
+
+# Treat generated/image assets as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
