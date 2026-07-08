@@ -2,7 +2,7 @@
 
 import { motion, useMotionValue, useReducedMotion, useSpring, useTransform } from "motion/react";
 import { useStudio } from "@/lib/store";
-import { cn } from "@/lib/utils";
+import { cn, progressStageLabel } from "@/lib/utils";
 
 function ProgressRing({ value }: { value: number }) {
   const r = 26;
@@ -77,7 +77,7 @@ export function ImageNode() {
         src={image.src}
         alt="画布图片"
         draggable={false}
-        className="block max-h-[max(240px,calc(100dvh-380px))] max-w-[min(72vw,760px)] rounded-panel shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8)]"
+        className="stage-base-img block max-h-[max(240px,calc(100dvh-380px))] max-w-[min(72vw,760px)] rounded-panel shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8)]"
       />
 
       <div
@@ -105,7 +105,7 @@ export function ImageNode() {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <ProgressRing value={progress} />
             <div className="breathe text-sm font-medium text-fg">
-              {phase === "submitting" ? "提交中…" : `生成中 · ${Math.round(progress * 100)}%`}
+              {phase === "submitting" ? "正在理解图片…" : progressStageLabel(Math.round(progress * 100))}
             </div>
           </div>
         </div>

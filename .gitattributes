@@ -1,6 +1,9 @@
 # Normalize line endings across machines (Windows <-> others)
 * text=auto eol=lf
 
+# Windows batch launcher must stay GBK + CRLF byte-for-byte (cmd.exe breaks otherwise)
+*.bat -text
+
 # Treat generated/image assets as binary
 *.png binary
 *.jpg binary

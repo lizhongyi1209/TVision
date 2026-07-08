@@ -1,8 +1,9 @@
 "use client";
 
 import { AnimatePresence } from "motion/react";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useStudio } from "@/lib/store";
+import { fakeProgressCurve } from "@/lib/utils";
 import { CropPanel } from "./CropPanel";
 import { GenerateBar } from "./GenerateBar";
 import { Grain } from "./Grain";
@@ -30,6 +31,8 @@ export default function Studio() {
 
   const phase = useStudio((s) => s.phase);
   const jobIds = useStudio((s) => s.jobIds);
+  const startedAt = useStudio((s) => s.startedAt);
+  const setRealProgress = useStudio((s) => s.setRealProgress);
   const setProgress = useStudio((s) => s.setProgress);
   const setResults = useStudio((s) => s.setResults);
   const setPhase = useStudio((s) => s.setPhase);
@@ -84,7 +87,7 @@ export default function Studio() {
       if (all.length) {
         setResults(all);
         setPhase("success");
-        showToast("success", `完成 ${all.length} 张`);
+        showToast("success", "生成完成");
         refreshHistory();
       } else {
         const e = errs.find(Boolean) || "生成失败";
@@ -111,7 +114,7 @@ export default function Studio() {
           prog[i] = typeof r.progress === "number" ? r.progress : prog[i];
           timers.push(setTimeout(() => tick(i), 1800));
         }
-        setProgress(prog.reduce((a, b) => a + b, 0) / jobIds.length);
+        setRealProgress(prog.reduce((a, b) => a + b, 0) / jobIds.length);
         if (done === jobIds.length) finish();
       } catch {
         if (!cancelled) timers.push(setTimeout(() => tick(i), 2600));
@@ -125,6 +128,38 @@ export default function Studio() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, jobIds]);
+
+  // Fake-progress engine: gives a smooth, ever-forward sense of progress while
+  // real completion is coarse/bursty. Real completion only ever raises the
+  // floor, never overtakes the eased curve until the job actually finishes.
+  const startedAtRef = useRef(startedAt);
+  startedAtRef.current = startedAt;
+  useEffect(() => {
+    if (phase !== "submitting" && phase !== "running") return;
+    const count = Math.max(1, useStudio.getState().params.count, jobIds.length);
+    const speedup = count > 1 ? 1.2 : 1;
+
+    const tick = () => {
+      const started = startedAtRef.current;
+      if (!started) return;
+      const seconds = (Date.now() - started) / 1000 / speedup;
+      const fake = fakeProgressCurve(seconds);
+      const real = useStudio.getState().realProgress * 100;
+      const next = Math.min(96, Math.max(fake, real * 0.9));
+      setProgress(next / 100);
+    };
+
+    tick();
+    const id = setInterval(tick, 300);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, jobIds.length]);
+
+  // Snap progress to 100% once success/idle/error land; keep the transition CSS-driven.
+  useEffect(() => {
+    if (phase === "success") setProgress(1);
+    else if (phase === "idle" || phase === "error") setProgress(0);
+  }, [phase, setProgress]);
 
   return (
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-ink">

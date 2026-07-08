@@ -76,7 +76,28 @@
       "Bash(cp \"C:/Users/Jony.li/.claude/settings.json\" claude-sync/user-settings.json)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(grep -v '^$')"
+      "Bash(grep -v '^$')",
+      "Skill(update-config)",
+      "Read(//Users/izkuwb/**)",
+      "Read(//Users/izkuwb/.claude/**)",
+      "Bash(git -C /Users/izkuwb rev-parse --show-toplevel)",
+      "Bash(jq *)",
+      "Bash(node *)",
+      "Bash(time npm ci)",
+      "Bash(npm *)",
+      "Bash(powershell -NoProfile -Command 'Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }')",
+      "Bash(\"C:/Users/Admin/Desktop/o1key-vision-workbench/启动 TVision.bat\")",
+      "Bash(echo \"---exit: $?\")",
+      "Bash(powershell *)",
+      "Bash(tasklist //FI \"IMAGENAME eq node.exe\")",
+      "Bash(tasklist //V //FI \"IMAGENAME eq cmd.exe\")",
+      "Bash(cmd //c \"chcp 936 >nul & call \\\\\"C:\\\\\\\\Users\\\\\\\\Admin\\\\\\\\Desktop\\\\\\\\o1key-vision-workbench\\\\\\\\启动 TVision.bat\\\\\"\")",
+      "Bash(chcp.com 936)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git stash *)",
+      "Bash(echo \"tsc-exit=$?\")",
+      "Bash(git config *)",
+      "Bash(ls .gitattributes)"
     ]
   }
 }

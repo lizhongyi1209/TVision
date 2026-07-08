@@ -152,3 +152,13 @@ input {
   border: 1.5px solid rgba(255, 255, 255, 0.85);
   border-radius: 999px;
 }
+
+/* Once a result slot is on stage, the base image steps back so the result
+   reads as the clear focal point (result > base > reference). Scoped to
+   ImageNode's own img via .stage-base-img so nothing else under Stage is
+   affected. */
+.stage-image-compact .stage-base-img {
+  max-height: min(46vh, 520px);
+  max-width: min(26vw, 380px);
+  transition: max-height 0.3s ease, max-width 0.3s ease;
+}

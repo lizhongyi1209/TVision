@@ -19,7 +19,7 @@ export interface ToastMsg {
 
 const DEFAULT_PARAMS: GenParams = {
   prompt: "",
-  model: "Nano Banana Pro",
+  model: "Nano Banana 2",
   resolution: "2K",
   aspectRatio: "auto",
   billing: "特价",
@@ -32,15 +32,18 @@ interface StudioState {
   cropOpen: boolean;
 
   activeActionId: string | null;
-  uploadOpen: boolean;
   refImage: string | null;
 
   params: GenParams;
 
   phase: Phase;
   progress: number;
+  realProgress: number;
+  startedAt: number | null;
   jobIds: string[];
   results: string[] | null;
+  resultIndex: number;
+  resultsOpen: boolean;
   error: string | null;
 
   settings: PublicSettings | null;
@@ -57,8 +60,6 @@ interface StudioState {
   replaceImage: (img: PlacedImage) => void;
   chooseAction: (id: string) => void;
   cancelAction: () => void;
-  openUpload: () => void;
-  closeUpload: () => void;
   setRef: (dataUrl: string | null) => void;
   updateParams: (p: Partial<GenParams>) => void;
 
@@ -66,10 +67,14 @@ interface StudioState {
   beginSubmit: () => void;
   setPhase: (p: Phase) => void;
   setProgress: (n: number) => void;
+  setRealProgress: (n: number) => void;
   setResults: (r: string[] | null) => void;
   setError: (e: string | null) => void;
   dismissResults: () => void;
   useResultAsCanvas: (img: PlacedImage) => void;
+  setResultIndex: (i: number) => void;
+  openResults: () => void;
+  closeResults: () => void;
 
   setSettings: (s: PublicSettings | null) => void;
   openSettings: () => void;
@@ -89,15 +94,18 @@ export const useStudio = create<StudioState>((set) => ({
   cropOpen: false,
 
   activeActionId: null,
-  uploadOpen: false,
   refImage: null,
 
   params: { ...DEFAULT_PARAMS },
 
   phase: "idle",
   progress: 0,
+  realProgress: 0,
+  startedAt: null,
   jobIds: [],
   results: null,
+  resultIndex: 0,
+  resultsOpen: false,
   error: null,
 
   settings: null,
@@ -111,9 +119,10 @@ export const useStudio = create<StudioState>((set) => ({
       image: img,
       menuOpen: false,
       activeActionId: null,
-      uploadOpen: false,
       refImage: null,
       results: null,
+      resultIndex: 0,
+      resultsOpen: false,
       error: null,
       phase: "idle",
       params: { ...s.params, prompt: "", aspectRatio: "auto", count: 1 },
@@ -133,42 +142,65 @@ export const useStudio = create<StudioState>((set) => ({
     set((s) => ({
       activeActionId: id,
       menuOpen: false,
-      uploadOpen: a.needsRef,
       refImage: a.needsRef ? null : s.refImage,
       params: { ...s.params, prompt: a.buildPrompt(), aspectRatio: a.defaultAspect, count: a.defaultCount },
       results: null,
+      resultIndex: 0,
+      resultsOpen: false,
       error: null,
       phase: "idle",
     }));
   },
 
   cancelAction: () =>
-    set({ activeActionId: null, uploadOpen: false, refImage: null, results: null, error: null, phase: "idle" }),
+    set({
+      activeActionId: null,
+      refImage: null,
+      results: null,
+      resultIndex: 0,
+      resultsOpen: false,
+      error: null,
+      phase: "idle",
+    }),
 
-  openUpload: () => set({ uploadOpen: true }),
-  closeUpload: () => set({ uploadOpen: false }),
-  setRef: (dataUrl) => set({ refImage: dataUrl, uploadOpen: false }),
+  setRef: (dataUrl) => set({ refImage: dataUrl }),
 
   updateParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
 
   setJobIds: (ids) => set({ jobIds: ids }),
-  beginSubmit: () => set({ phase: "submitting", error: null, results: null, progress: 0 }),
+  beginSubmit: () =>
+    set({
+      phase: "submitting",
+      error: null,
+      results: null,
+      resultIndex: 0,
+      resultsOpen: false,
+      progress: 0,
+      realProgress: 0,
+      startedAt: Date.now(),
+    }),
   setPhase: (p) => set({ phase: p }),
   setProgress: (n) => set({ progress: n }),
-  setResults: (r) => set({ results: r }),
+  setRealProgress: (n) => set({ realProgress: n }),
+  setResults: (r) => set({ results: r, resultIndex: 0 }),
   setError: (e) => set({ error: e }),
-  dismissResults: () => set({ results: null, phase: "idle" }),
+  dismissResults: () => set({ results: null, resultIndex: 0, resultsOpen: false, phase: "idle" }),
 
   useResultAsCanvas: (img) =>
     set({
       image: img,
       results: null,
+      resultIndex: 0,
+      resultsOpen: false,
       phase: "idle",
       activeActionId: null,
-      uploadOpen: false,
       refImage: null,
       menuOpen: false,
     }),
+
+  setResultIndex: (i) => set({ resultIndex: i }),
+  openResults: () => set((s) => (s.results && s.results.length > 0 ? { resultsOpen: true } : {})),
+  closeResults: () => set({ resultsOpen: false }),
 
   setSettings: (s) => set({ settings: s }),
   openSettings: () => set({ settingsOpen: true, historyOpen: false }),

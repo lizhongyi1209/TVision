@@ -47,6 +47,28 @@ export async function fileToDownscaledDataURL(
   return { dataUrl, width: w, height: h };
 }
 
+/**
+ * Piecewise-linear "believable wait" curve for a single image, tuned to a
+ * 20-60s real generation time. Returns a percentage 0-96 (never hits 100 on
+ * its own — the caller snaps to 100 once the job actually finishes).
+ */
+export function fakeProgressCurve(seconds: number): number {
+  const t = Math.max(0, seconds);
+  if (t <= 2) return (t / 2) * 8;
+  if (t <= 15) return 8 + ((t - 2) / 13) * (45 - 8);
+  if (t <= 40) return 45 + ((t - 15) / 25) * (78 - 45);
+  if (t <= 70) return 78 + ((t - 40) / 30) * (90 - 78);
+  return Math.min(96, 90 + (t - 70) * 0.08);
+}
+
+/** Coarse "what's happening" copy for the fake-progress bar. progress is 0-100. */
+export function progressStageLabel(progress: number): string {
+  if (progress < 15) return "正在理解图片…";
+  if (progress < 50) return "正在构图…";
+  if (progress < 85) return "正在绘制细节…";
+  return "即将完成…";
+}
+
 export function downloadUrl(url: string, filename: string): void {
   const a = document.createElement("a");
   a.href = url;

@@ -2,12 +2,14 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getAction } from "@/lib/actions";
 import { useStudio } from "@/lib/store";
 import { cn, fileToDownscaledDataURL } from "@/lib/utils";
 import { Icon } from "./icons";
 import { ImageNode } from "./ImageNode";
 import { RadialMenu } from "./RadialMenu";
-import { UploadPopover } from "./UploadPopover";
+import { RefSlot } from "./RefSlot";
+import { ResultSlot } from "./ResultSlot";
 
 function Dropzone({ drag, busy, onPick }: { drag: boolean; busy: boolean; onPick: () => void }) {
   return (
@@ -45,10 +47,19 @@ export function Stage() {
   const setImage = useStudio((s) => s.setImage);
   const menuOpen = useStudio((s) => s.menuOpen);
   const closeMenu = useStudio((s) => s.closeMenu);
+  const activeActionId = useStudio((s) => s.activeActionId);
+  const phase = useStudio((s) => s.phase);
+  const results = useStudio((s) => s.results);
   const showToast = useStudio((s) => s.showToast);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const action = getAction(activeActionId);
+  const resultVisible =
+    !!image &&
+    (phase === "submitting" || phase === "running" || (phase === "success" && !!results?.length));
+  const refVisible = !!image && !!action?.needsRef;
 
   const addFile = useCallback(
     async (file: File | undefined | null) => {
@@ -118,15 +129,22 @@ export function Stage() {
       {!image ? (
         <Dropzone drag={drag} busy={busy} onPick={() => inputRef.current?.click()} />
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center px-8 pt-8 pb-[232px]">
-          <div className="relative">
+        <div
+          className={cn(
+            "absolute inset-0 flex items-center justify-center px-8 pt-8 pb-[232px]",
+            refVisible || resultVisible ? "gap-4" : "gap-6",
+          )}
+        >
+          <div className={cn("relative shrink-0", resultVisible && "stage-image-compact")}>
             <ImageNode />
             <AnimatePresence>{menuOpen ? <RadialMenu /> : null}</AnimatePresence>
           </div>
+          <AnimatePresence>
+            {refVisible ? <RefSlot key="ref" compact={resultVisible} /> : null}
+          </AnimatePresence>
+          <AnimatePresence>{resultVisible ? <ResultSlot key="result" /> : null}</AnimatePresence>
         </div>
       )}
-
-      <UploadPopover />
     </div>
   );
 }

@@ -40,7 +40,7 @@ export const ACTIONS: StudioAction[] = [
     icon: "Pants",
     needsRef: true,
     refLabel: "上传你想换上的裤子",
-    refHint: "裤子 / 下装图片",
+    refHint: "裤子平铺图或模特图都可以",
     defaultAspect: "auto",
     defaultCount: 1,
     buildPrompt: () =>

@@ -16,7 +16,6 @@ export function GenerateBar() {
   const activeActionId = useStudio((s) => s.activeActionId);
   const refImage = useStudio((s) => s.refImage);
   const cancelAction = useStudio((s) => s.cancelAction);
-  const openUpload = useStudio((s) => s.openUpload);
   const phase = useStudio((s) => s.phase);
   const settings = useStudio((s) => s.settings);
   const openSettings = useStudio((s) => s.openSettings);
@@ -51,7 +50,6 @@ export function GenerateBar() {
     }
     if (needsRefMissing) {
       showToast("error", action?.refLabel || "请先上传参考图");
-      openUpload();
       return;
     }
     if (cErr) {
@@ -121,29 +119,6 @@ export function GenerateBar() {
             ) : (
               <span className="text-sm text-fg-mute">未选操作 · 点击图片选操作，或直接写提示词</span>
             )}
-
-            {action?.needsRef ? (
-              refImage ? (
-                <button
-                  onClick={openUpload}
-                  className="group inline-flex items-center gap-2 rounded-full border border-line bg-panel-2 py-1 pl-1 pr-3 text-xs text-fg-dim hover:border-line-2"
-                  title="更换参考图"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={refImage} alt="参考" className="h-6 w-6 rounded-full object-cover" />
-                  参考图
-                  <Icon name="ArrowClockwise" size={12} className="text-fg-mute group-hover:text-fg" />
-                </button>
-              ) : (
-                <button
-                  onClick={openUpload}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-xs text-accent"
-                >
-                  <Icon name="UploadSimple" size={13} />
-                  补上参考图
-                </button>
-              )
-            ) : null}
           </div>
 
           {/* prompt */}

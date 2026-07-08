@@ -34,7 +34,7 @@
 **尚未做**（明日 P0）
 - 真实付费出图未跑（需真实令牌）。链路已验证到「鉴权」这一步。
 
-### 第二轮：品牌化 + 体验迭代（⚠️ 全部尚未 git commit）
+### 第二轮：品牌化 + 体验迭代（已 commit：ee043fa）
 
 - [x] **品牌重塑 TVision**（元流视觉 / tokenflow vision）：SVG 标记「token 短划流入镜头」+ favicon（`src/app/icon.svg`）+ 头部字标（`src/components/Logo.tsx`）+ metadata + 包名改 `tvision` + 下载文件名前缀 `tvision-`
 - [x] **设置面板简化**：只剩令牌输入 + 只读的全球加速线路 + 测试连接；删掉「o1key 接入」标题、自定义 Base URL、默认生成参数区块。服务端同步收紧：POST /api/settings 只接受 apiKey/clearApiKey，旧 data/settings.json 里的多线路 / baseUrlOverride 读取时自动清洗（`readSettings` 逐字段构造）
@@ -46,6 +46,17 @@
 - [x] **快速裁剪**（`src/components/CropPanel.tsx`，依赖 `react-image-crop@11`）：默认 1:1 居中选区、自由拖动缩放、8 组比例预设；百分比换算原图像素后本地 canvas 裁剪；`replaceImage` 只换图不清提示词。注意坑：该库自带 CSS 会用 `max-height: inherit` 顶掉 img 上的高度类，上限要挂在 ReactCrop 根节点上
 - [x] **径向菜单双扇区**：左侧快捷小工具（目前只有裁剪，镜像布局），右侧原有五个 AI 操作；顶栏裁剪按钮已移除
 - [x] `.gitignore`：`/data/settings.json` 收紧为整个 `/data/`
+
+### 第三轮：部署上线 + 画布生成闭环（本轮随本次 commit 提交）
+
+- [x] **部署验证**：`npm ci` → `npm run build` → `npm run start`（:3000）全绿；冒烟测试 `/`、`/api/settings`、`/api/history` 全 200；`api.o1key.cn` 可达（假令牌 → 401 被拒，链路只差真令牌）
+- [x] **双击启动器**（`启动 TVision.bat`）：已在运行则直接开浏览器；缺 node_modules 自动 `npm ci`、缺构建产物自动 build；服务挂在最小化「TVision Server」窗口（关窗即停）；最多 60s 就绪轮询后自动开浏览器。**坑：中文 .bat 必须 GBK + CRLF 落盘**（UTF-8 或 LF 会被 cmd 逐行切碎报「不是内部或外部命令」），本文件已转换，勿用会改编码的编辑器另存
+- [x] **上传弹窗 → 内联参考图槽**：删除 `UploadPopover.tsx`，新增 `RefSlot.tsx`。选「换上衣 / 换裤子 / 换背景」后，上传槽以 ⊕ 连接符内联出现在原图右侧（点击 / 拖拽上传，悬停更换 / 移除，下方可取消操作）；store 移除整套 `uploadOpen` 弹窗态；换裤子提示语与换上衣统一口径
+- [x] **假进度曲线**：按单张 20-60s 真实耗时调校的分段减速曲线（10s≈31% / 20s≈52% / 40s≈78% / 70s+ 封顶 96%，完成瞬间补 100%；多张批量整体放慢 1.2 倍），配四档阶段文案（理解图片 → 构图 → 绘制细节 → 即将完成）；真实轮询完成度写入 `realProgress` 做抬底合成，纯函数在 `utils.ts:fakeProgressCurve`
+- [x] **结果上画布闭环**（`ResultSlot.tsx`）：生成中右槽显示进度卡（大号百分比 + 阶段文案 + 细进度条），完成后原地切换为结果大图，**不再自动弹框**；点结果图 → 前后对比弹框（`ResultView` 改为显式受控 `resultsOpen`，画布与弹框共享 `resultIndex`）；多张结果画布下方胶片条切换
+- [x] **成功态三列布局**：`[原图(中)] ⊕ [参考图(小 compact)] → [结果图(最大)]`；参考图**常驻**且 compact 态仍可悬停更换 / 移除（快速换参考图再生成的迭代闭环）；尺寸层级 结果(≤62vh/480px) > 原图(≤46vh/380px，`.stage-image-compact`) > 参考(≤200px)
+- [x] **界面文案脱敏**：删除「自动压缩到 20MB 以内」等实现细节文案（压缩逻辑保留，静默执行）；约定 UI 不出现压缩 / 体积上限 / 轮询 / 重试等字眼
+- [x] **默认模型 → Nano Banana 2**：`settings.ts` / `store.ts` 默认值 + 本机 `data/settings.json` 三处同步（id `nano-banana-2` 原生在列表，2K + 特价默认组合兼容），接口实测已返回新默认
 
 ---
 
@@ -76,7 +87,7 @@
 - **径向菜单响应式**：窄屏 / 竖长图时左右两个扇区（左工具 / 右操作）可能溢出视口 → 缩小半径或折叠成列表。
 - **生成栏小屏**：参数多时换行拥挤 → 折叠「高级参数」到抽屉，主行只留提示词+生成。
 - **轮询兜底**：目前无前端硬超时（靠上游）。加 5 分钟兜底 + 手动「取消 / 重试」。
-- **进度体验**：多张批量时进度是平均值，可改成每张独立进度条。
+- **进度体验**：已有整体假进度曲线；多张批量可进一步做每张独立进度。
 
 ### P2 · 功能扩展
 - 局部涂抹遮罩重绘（引入 Konva 图层，仅此场景）。
@@ -94,8 +105,10 @@
 ---
 
 ## 四、状态快照
-- **⚠️ 第二轮所有改动未 commit**（12+ 个文件修改，新增 icon.svg / Logo.tsx / CropPanel.tsx / historyMeta.ts），确认界面效果后先提交再继续开发
-- 入口：`src/components/Studio.tsx`（编排 + 轮询引擎）；裁剪弹窗 `CropPanel.tsx`；双扇区菜单 `RadialMenu.tsx`
+- 第一 / 二 / 三轮均已 commit；工作树干净后继续开发
+- 入口：`src/components/Studio.tsx`（编排 + 轮询 + 假进度引擎）；画布槽位 `Stage.tsx` → `RefSlot.tsx`（参考图）/ `ResultSlot.tsx`（进度卡 + 结果图）；对比弹框 `ResultView.tsx`（受控 `resultsOpen`）；裁剪弹窗 `CropPanel.tsx`；双扇区菜单 `RadialMenu.tsx`
+- 日常启动：双击根目录「启动 TVision.bat」（GBK+CRLF，勿改编码）
+- 默认模型：Nano Banana 2（2K · 特价）
 - 品牌：TVision（元流视觉 / tokenflow vision），主题色即品牌色（`--color-accent` 琥珀）
 - 依赖新增：`react-image-crop@11`（裁剪 UI，零依赖）
 - API 契约来源：已装技能 `o1key-nano-banana`（`references/api.md` + `scripts/generate_image.py`），逻辑已内联到 `src/lib/o1key.ts`，仓库自包含。

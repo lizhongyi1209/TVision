@@ -2,6 +2,8 @@
 
 import {
   ArrowClockwise,
+  ArrowRight,
+  ArrowsLeftRight,
   ArrowsOutSimple,
   CaretDown,
   Check,
@@ -60,6 +62,8 @@ const MAP: Record<string, ComponentType<IconProps>> = {
   MagicWand,
   FrameCorners,
   Crop,
+  ArrowRight,
+  ArrowsLeftRight,
 } as unknown as Record<string, ComponentType<IconProps>>;
 
 export function Icon({

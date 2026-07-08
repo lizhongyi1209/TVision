@@ -12,7 +12,7 @@ const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const DEFAULTS: Settings = {
   apiKey: "",
   route: DEFAULT_ROUTE,
-  defaults: { model: "Nano Banana Pro", resolution: "2K", billing: "特价", aspectRatio: "auto" },
+  defaults: { model: "Nano Banana 2", resolution: "2K", billing: "特价", aspectRatio: "auto" },
 };
 
 export async function readSettings(): Promise<Settings> {

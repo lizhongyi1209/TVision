@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useStudio } from "@/lib/store";
 import { cn, downloadUrl } from "@/lib/utils";
 import { CompareSlider } from "./CompareSlider";
@@ -9,23 +9,20 @@ import { Icon } from "./icons";
 import { Button, IconButton } from "./ui";
 
 export function ResultView() {
-  const phase = useStudio((s) => s.phase);
+  const resultsOpen = useStudio((s) => s.resultsOpen);
+  const closeResults = useStudio((s) => s.closeResults);
   const results = useStudio((s) => s.results);
   const image = useStudio((s) => s.image);
+  const resultIndex = useStudio((s) => s.resultIndex);
+  const setResultIndex = useStudio((s) => s.setResultIndex);
   const dismiss = useStudio((s) => s.dismissResults);
   const useAsCanvas = useStudio((s) => s.useResultAsCanvas);
   const showToast = useStudio((s) => s.showToast);
 
-  const [sel, setSel] = useState(0);
   const [compare, setCompare] = useState(true);
 
-  useEffect(() => {
-    setSel(0);
-    setCompare(true);
-  }, [results]);
-
-  const open = phase === "success" && !!results && results.length > 0 && !!image;
-  const current = results && results[sel] ? results[sel] : null;
+  const open = resultsOpen && !!results && results.length > 0 && !!image;
+  const current = results && results[resultIndex] ? results[resultIndex] : null;
 
   function setAsCanvas() {
     if (!current) return;
@@ -51,7 +48,7 @@ export function ResultView() {
           exit={{ opacity: 0 }}
           className="absolute inset-0 z-[90] flex items-center justify-center p-4 sm:p-8"
         >
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={dismiss} />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={closeResults} />
 
           <motion.div
             initial={{ opacity: 0, scale: 0.97, y: 16 }}
@@ -79,7 +76,7 @@ export function ResultView() {
                     onClick={() => setCompare((c) => !c)}
                   />
                 ) : null}
-                <IconButton name="X" label="关闭" onClick={dismiss} />
+                <IconButton name="X" label="关闭" onClick={closeResults} />
               </div>
             </div>
 
@@ -108,12 +105,12 @@ export function ResultView() {
                   <button
                     key={r}
                     onClick={() => {
-                      setSel(i);
+                      setResultIndex(i);
                       setCompare(false);
                     }}
                     className={cn(
                       "h-16 w-16 shrink-0 overflow-hidden rounded-control border transition-all",
-                      i === sel ? "border-accent ring-2 ring-accent/40" : "border-line hover:border-line-2",
+                      i === resultIndex ? "border-accent ring-2 ring-accent/40" : "border-line hover:border-line-2",
                     )}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -140,7 +137,7 @@ export function ResultView() {
                     下载全部
                   </Button>
                 ) : null}
-                <Button variant="primary" onClick={() => current && download(current, sel)}>
+                <Button variant="primary" onClick={() => current && download(current, resultIndex)}>
                   <Icon name="DownloadSimple" size={15} weight="bold" />
                   下载
                 </Button>
@@ -152,3 +149,4 @@ export function ResultView() {
     </AnimatePresence>
   );
 }
+
