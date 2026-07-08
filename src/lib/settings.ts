@@ -12,17 +12,16 @@ const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const DEFAULTS: Settings = {
   apiKey: "",
   route: DEFAULT_ROUTE,
-  baseUrlOverride: "",
   defaults: { model: "Nano Banana Pro", resolution: "2K", billing: "特价", aspectRatio: "auto" },
 };
 
 export async function readSettings(): Promise<Settings> {
   try {
     const raw = await fs.readFile(SETTINGS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<Settings>;
+    const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
     return {
-      ...DEFAULTS,
-      ...parsed,
+      apiKey: typeof parsed.apiKey === "string" ? parsed.apiKey : "",
+      route: DEFAULT_ROUTE,
       defaults: { ...DEFAULTS.defaults, ...(parsed.defaults || {}) },
     };
   } catch {

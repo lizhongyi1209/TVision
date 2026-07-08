@@ -1,6 +1,6 @@
 // Shared types across client and server.
 
-export type RouteName = "全球加速" | "CF加速" | "美国直连";
+export type RouteName = "全球加速";
 export type Billing = "特价" | "官方";
 export type Resolution = "512" | "1K" | "2K" | "4K";
 export type ModelName = "Nano Banana Pro" | "Nano Banana 2" | "Nano Banana";
@@ -15,7 +15,6 @@ export interface SettingsDefaults {
 export interface Settings {
   apiKey: string;
   route: RouteName;
-  baseUrlOverride: string;
   defaults: SettingsDefaults;
 }
 
@@ -34,11 +33,22 @@ export interface JobStatusResponse {
   error?: string;
 }
 
+export interface GenMeta {
+  prompt: string;
+  model: ModelName;
+  resolution: Resolution;
+  aspectRatio: string;
+  billing: Billing;
+  count: number;
+  createdAt: number;
+}
+
 export interface HistoryItem {
   name: string;
   url: string;
   createdAt: number;
   size: number;
+  meta?: GenMeta;
 }
 
 export interface GenParams {

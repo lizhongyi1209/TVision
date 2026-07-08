@@ -5,8 +5,9 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("http://localhost:3000"),
-  title: "taste · studio",
-  description: "本地电商 AI 生图工作台 · o1key Nano Banana",
+  title: "TVision · 元流视觉",
+  description: "tokenflow vision · 本地电商 AI 生图工作台（o1key Nano Banana）",
+  applicationName: "TVision",
 };
 
 export const viewport: Viewport = {

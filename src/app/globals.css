@@ -140,3 +140,15 @@ textarea,
 input {
   font-family: inherit;
 }
+
+/* react-image-crop theming (match the app accent) */
+.ReactCrop__crop-selection {
+  border: 1.5px solid var(--color-accent);
+}
+.ReactCrop .ReactCrop__drag-handle {
+  width: 11px;
+  height: 11px;
+  background-color: var(--color-accent);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  border-radius: 999px;
+}

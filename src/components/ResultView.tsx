@@ -39,7 +39,7 @@ export function ResultView() {
   }
 
   function download(url: string, i: number) {
-    downloadUrl(url, `taste-studio-${Date.now()}-${i + 1}.png`);
+    downloadUrl(url, `tvision-${Date.now()}-${i + 1}.png`);
   }
 
   return (

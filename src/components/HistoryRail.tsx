@@ -5,12 +5,14 @@ import { useCallback, useEffect } from "react";
 import { useStudio } from "@/lib/store";
 import { formatBytes } from "@/lib/utils";
 import { Icon } from "./icons";
+import type { HistoryItem } from "@/lib/types";
 
 export function HistoryRail() {
   const history = useStudio((s) => s.history);
   const setHistory = useStudio((s) => s.setHistory);
   const close = useStudio((s) => s.toggleHistory);
   const useAsCanvas = useStudio((s) => s.useResultAsCanvas);
+  const updateParams = useStudio((s) => s.updateParams);
   const showToast = useStudio((s) => s.showToast);
 
   const refresh = useCallback(async () => {
@@ -26,14 +28,27 @@ export function HistoryRail() {
     refresh();
   }, [refresh]);
 
-  function pick(url: string) {
-    const img = new Image();
-    img.onload = () => {
-      useAsCanvas({ src: url, width: img.naturalWidth, height: img.naturalHeight });
-      showToast("success", "已载入画布");
+  function pick(it: HistoryItem) {
+    const apply = (w: number, h: number) => {
+      useAsCanvas({ src: it.url, width: w, height: h });
+      if (it.meta) {
+        updateParams({
+          prompt: it.meta.prompt,
+          model: it.meta.model,
+          resolution: it.meta.resolution,
+          aspectRatio: it.meta.aspectRatio,
+          billing: it.meta.billing,
+          count: it.meta.count,
+        });
+        showToast("success", "已载入画布，并还原当时的提示词与参数");
+      } else {
+        showToast("success", "已载入画布");
+      }
     };
-    img.onerror = () => useAsCanvas({ src: url, width: 1024, height: 1024 });
-    img.src = url;
+    const img = new Image();
+    img.onload = () => apply(img.naturalWidth, img.naturalHeight);
+    img.onerror = () => apply(1024, 1024);
+    img.src = it.url;
   }
 
   async function del(name: string) {
@@ -91,7 +106,7 @@ export function HistoryRail() {
             <div className="grid grid-cols-2 gap-3">
               {history.map((it) => (
                 <div key={it.name} className="group relative overflow-hidden rounded-control border border-line">
-                  <button onClick={() => pick(it.url)} className="block w-full">
+                  <button onClick={() => pick(it)} className="block w-full">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={it.url} alt={it.name} className="aspect-square w-full object-cover transition group-hover:scale-[1.03]" />
                   </button>
@@ -111,7 +126,7 @@ export function HistoryRail() {
           )}
         </div>
 
-        <div className="border-t border-line px-5 py-3 text-xs text-fg-mute">点击图片可载入画布继续编辑</div>
+        <div className="border-t border-line px-5 py-3 text-xs text-fg-mute">点击图片载入画布，同时还原当时的提示词与参数</div>
       </motion.aside>
     </>
   );

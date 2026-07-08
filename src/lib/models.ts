@@ -3,8 +3,6 @@ import type { Billing, ModelName, Resolution, RouteName } from "./types";
 // Client-safe route list (mirrors NETWORK_ROUTES in o1key.ts, which is server-only).
 export const ROUTE_OPTIONS: { value: RouteName; label: string; base: string }[] = [
   { value: "全球加速", label: "全球加速 · api.o1key.cn", base: "https://api.o1key.cn" },
-  { value: "CF加速", label: "CF加速 · cf-api.o1key.com", base: "https://cf-api.o1key.com" },
-  { value: "美国直连", label: "美国直连 · api.o1key.com", base: "https://api.o1key.com" },
 ];
 
 export interface ModelInfo {

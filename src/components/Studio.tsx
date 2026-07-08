@@ -3,10 +3,12 @@
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect } from "react";
 import { useStudio } from "@/lib/store";
+import { CropPanel } from "./CropPanel";
 import { GenerateBar } from "./GenerateBar";
 import { Grain } from "./Grain";
 import { HistoryRail } from "./HistoryRail";
 import { Icon } from "./icons";
+import { Logo } from "./Logo";
 import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Stage } from "./Stage";
@@ -16,10 +18,10 @@ import { IconButton } from "./ui";
 export default function Studio() {
   const image = useStudio((s) => s.image);
   const setImage = useStudio((s) => s.setImage);
-  const params = useStudio((s) => s.params);
   const updateParams = useStudio((s) => s.updateParams);
   const setSettings = useStudio((s) => s.setSettings);
   const openSettings = useStudio((s) => s.openSettings);
+  const cropOpen = useStudio((s) => s.cropOpen);
   const toggleHistory = useStudio((s) => s.toggleHistory);
   const settingsOpen = useStudio((s) => s.settingsOpen);
   const historyOpen = useStudio((s) => s.historyOpen);
@@ -129,17 +131,8 @@ export default function Studio() {
       <Grain />
 
       <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-line px-4">
-        <div className="flex items-center gap-2.5">
-          <span className="h-2 w-2 rounded-full bg-accent shadow-[0_0_12px_var(--color-accent)]" />
-          <span className="text-sm font-medium tracking-tight text-fg">
-            taste <span className="text-fg-mute">· studio</span>
-          </span>
-          <span className="ml-1 hidden text-xs text-fg-mute md:block">本地电商 AI 生图</span>
-        </div>
+        <Logo />
         <div className="flex items-center gap-1.5">
-          <span className="mr-1 hidden rounded-full border border-line px-3 py-1 font-mono text-xs text-fg-dim sm:block">
-            {params.model} · {params.resolution}
-          </span>
           {image ? <IconButton name="Plus" label="重新添加图片" onClick={() => setImage(null)} /> : null}
           <IconButton name="Stack" label="历史生成" active={historyOpen} onClick={toggleHistory} />
           <IconButton name="Gear" label="设置" active={settingsOpen} onClick={openSettings} />
@@ -152,6 +145,7 @@ export default function Studio() {
         <ResultView />
       </main>
 
+      <AnimatePresence>{cropOpen ? <CropPanel /> : null}</AnimatePresence>
       <AnimatePresence>{settingsOpen ? <SettingsPanel /> : null}</AnimatePresence>
       <AnimatePresence>{historyOpen ? <HistoryRail /> : null}</AnimatePresence>
       <Toaster />

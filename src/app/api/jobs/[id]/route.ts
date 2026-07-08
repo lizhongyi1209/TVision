@@ -31,7 +31,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const fail = (error: string): JobStatusResponse => ({ id, status: "failed", progress: null, images: [], error });
   if (!s.apiKey) return NextResponse.json(fail("未设置 API 令牌"));
 
-  const baseUrl = resolveBaseUrl(s.route, s.baseUrlOverride);
+  const baseUrl = resolveBaseUrl(s.route);
   try {
     const poll = await pollTaskOnce(baseUrl, s.apiKey, id);
 

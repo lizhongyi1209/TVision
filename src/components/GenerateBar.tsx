@@ -86,7 +86,7 @@ export function GenerateBar() {
     } catch (e) {
       setError((e as Error).message);
       setPhase("error");
-      showToast("error", "提交失败，请检查网络或线路");
+      showToast("error", "提交失败，请检查网络");
     }
   }
 
@@ -188,7 +188,6 @@ export function GenerateBar() {
             />
 
             <div className="ml-auto flex items-center gap-3">
-              <span className="hidden text-xs text-fg-mute sm:block">按 o1key 计费</span>
               <Button variant="primary" onClick={generate} disabled={!canGenerate} className="px-6">
                 {busy ? (
                   <>

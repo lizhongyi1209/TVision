@@ -8,7 +8,7 @@
 # local runtime data (never commit tokens or generated images)
 /output/*
 !/output/.gitkeep
-/data/settings.json
+/data/
 
 # misc
 *.log

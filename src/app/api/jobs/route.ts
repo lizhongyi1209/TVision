@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { readSettings } from "@/lib/settings";
 import { buildModelId, buildSubmitBody, MAX_BODY_BYTES, resolveBaseUrl, submitTask } from "@/lib/o1key";
+import { appendMeta } from "@/lib/historyMeta";
+import type { Billing, ModelName, Resolution } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,11 +47,19 @@ export async function POST(req: Request) {
     );
   }
 
-  const baseUrl = resolveBaseUrl(s.route, s.baseUrlOverride);
+  const baseUrl = resolveBaseUrl(s.route);
   try {
     const ids = await Promise.all(
       Array.from({ length: count }, () => submitTask(baseUrl, s.apiKey, submitBody)),
     );
+    await appendMeta(ids, {
+      prompt,
+      model: model as ModelName,
+      resolution: resolution as Resolution,
+      aspectRatio,
+      billing: billing as Billing,
+      count,
+    });
     return NextResponse.json({ jobs: ids.map((id, index) => ({ id, index })), modelId });
   } catch (e) {
     return NextResponse.json({ error: (e as Error)?.message || "提交失败" }, { status: 502 });

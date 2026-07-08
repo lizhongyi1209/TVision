@@ -118,7 +118,7 @@ export function Stage() {
       {!image ? (
         <Dropzone drag={drag} busy={busy} onPick={() => inputRef.current?.click()} />
       ) : (
-        <div className="absolute inset-0 flex items-center justify-center p-8">
+        <div className="absolute inset-0 flex items-center justify-center px-8 pt-8 pb-[232px]">
           <div className="relative">
             <ImageNode />
             <AnimatePresence>{menuOpen ? <RadialMenu /> : null}</AnimatePresence>

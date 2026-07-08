@@ -8,8 +8,6 @@ import type { RouteName } from "./types";
 
 export const NETWORK_ROUTES: Record<RouteName, string> = {
   全球加速: "https://api.o1key.cn",
-  CF加速: "https://cf-api.o1key.com",
-  美国直连: "https://api.o1key.com",
 };
 export const DEFAULT_ROUTE: RouteName = "全球加速";
 
@@ -33,8 +31,7 @@ const RUNNING = new Set([
   "submitted", "queued", "pending", "running", "processing", "in_progress", "in-progress", "created",
 ]);
 
-export function resolveBaseUrl(route: RouteName, override?: string): string {
-  if (override && override.trim()) return override.trim().replace(/\/+$/, "");
+export function resolveBaseUrl(route: RouteName): string {
   return NETWORK_ROUTES[route] ?? NETWORK_ROUTES[DEFAULT_ROUTE];
 }
 
@@ -235,7 +232,7 @@ export async function submitTask(baseUrl: string, apiKey: string, body: SubmitBo
     });
   } catch (e) {
     throw new Error(
-      `网络连接失败，无法连接 ${url}：${(e as Error)?.message || e}。请在设置里换一条线路（CF加速 / 美国直连），或检查网络。`,
+      `网络连接失败，无法连接 ${url}：${(e as Error)?.message || e}。请检查网络。`,
     );
   }
   const text = await res.text();

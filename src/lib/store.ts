@@ -29,6 +29,7 @@ const DEFAULT_PARAMS: GenParams = {
 interface StudioState {
   image: PlacedImage | null;
   menuOpen: boolean;
+  cropOpen: boolean;
 
   activeActionId: string | null;
   uploadOpen: boolean;
@@ -51,6 +52,9 @@ interface StudioState {
   setImage: (img: PlacedImage | null) => void;
   openMenu: () => void;
   closeMenu: () => void;
+  openCrop: () => void;
+  closeCrop: () => void;
+  replaceImage: (img: PlacedImage) => void;
   chooseAction: (id: string) => void;
   cancelAction: () => void;
   openUpload: () => void;
@@ -82,6 +86,7 @@ let toastSeq = 1;
 export const useStudio = create<StudioState>((set) => ({
   image: null,
   menuOpen: false,
+  cropOpen: false,
 
   activeActionId: null,
   uploadOpen: false,
@@ -102,7 +107,7 @@ export const useStudio = create<StudioState>((set) => ({
   toast: null,
 
   setImage: (img) =>
-    set({
+    set((s) => ({
       image: img,
       menuOpen: false,
       activeActionId: null,
@@ -111,10 +116,16 @@ export const useStudio = create<StudioState>((set) => ({
       results: null,
       error: null,
       phase: "idle",
-    }),
+      params: { ...s.params, prompt: "", aspectRatio: "auto", count: 1 },
+    })),
 
   openMenu: () => set((s) => (s.image ? { menuOpen: true } : {})),
   closeMenu: () => set({ menuOpen: false }),
+
+  openCrop: () => set((s) => (s.image ? { cropOpen: true, menuOpen: false } : {})),
+  closeCrop: () => set({ cropOpen: false }),
+  // Swap only the canvas image (crop result): keep prompt/action/params intact.
+  replaceImage: (img) => set({ image: img, cropOpen: false, menuOpen: false }),
 
   chooseAction: (id) => {
     const a = getAction(id);

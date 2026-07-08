@@ -77,7 +77,7 @@ export function ImageNode() {
         src={image.src}
         alt="画布图片"
         draggable={false}
-        className="block max-h-[68vh] max-w-[min(72vw,760px)] rounded-panel shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8)]"
+        className="block max-h-[max(240px,calc(100dvh-380px))] max-w-[min(72vw,760px)] rounded-panel shadow-[0_40px_120px_-30px_rgba(0,0,0,0.8)]"
       />
 
       <div

@@ -6,6 +6,7 @@ import {
   CaretDown,
   Check,
   CircleNotch,
+  Crop,
   DownloadSimple,
   FrameCorners,
   Gear,
@@ -58,6 +59,7 @@ const MAP: Record<string, ComponentType<IconProps>> = {
   CaretDown,
   MagicWand,
   FrameCorners,
+  Crop,
 } as unknown as Record<string, ComponentType<IconProps>>;
 
 export function Icon({
