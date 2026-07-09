@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
+import { diag } from "@/lib/logStore";
 import { ROUTE_OPTIONS } from "@/lib/models";
 import { useStudio } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -37,8 +38,14 @@ export function SettingsPanel() {
         body: JSON.stringify(body),
       }).then((x) => x.json());
       setTestMsg({ ok: !!r.ok, message: r.message });
+      if (r.ok) {
+        diag("info", "连接测试", r.message || "连接测试成功");
+      } else {
+        diag("error", "连接测试", "连接测试失败", r.message);
+      }
     } catch {
       setTestMsg({ ok: false, message: "请求失败" });
+      diag("error", "连接测试", "连接测试请求失败");
     } finally {
       setTesting(false);
     }

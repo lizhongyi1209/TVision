@@ -97,7 +97,23 @@
       "Bash(git stash *)",
       "Bash(echo \"tsc-exit=$?\")",
       "Bash(git config *)",
-      "Bash(ls .gitattributes)"
+      "Bash(ls .gitattributes)",
+      "Bash(git push *)",
+      "Read(//Users/dev/**)",
+      "Bash(git -C /Users/dev/workspace-6d81a4eb rev-parse --is-inside-work-tree)",
+      "Bash(git pull *)",
+      "Bash(tasklist)",
+      "WebFetch(domain:apifox.newapi.ai)",
+      "WebFetch(domain:www.newapi.ai)",
+      "Bash(workbench)",
+      "Bash(package.json\" && echo \"--- does that dir have its own MarkerPanel / actions.ts? ---\" && find \"C:\\\\Users\\\\Jony.li\\\\Desktop\" -maxdepth 3 -iname \"MarkerPanel.tsx\" 2>/dev/null && find \"C:\\\\Users\\\\Jony.li\\\\Desktop\" -maxdepth 2 -iname \"package.json\" 2>/dev/null)",
+      "Bash(rm -f src/components/MarkerPanel.tsx src/lib/markerPrompt.ts src/lib/__tests__/markerPrompt.test.ts)",
+      "Bash(rmdir src/lib/__tests__)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"EXIT1: $?\")",
+      "Bash(echo \"EXIT2: $?\")",
+      "Bash(timeout 30 git ls-remote --heads origin)",
+      "Bash(git rev-list *)"
     ]
   }
 }

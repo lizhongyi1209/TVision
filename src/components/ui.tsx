@@ -90,18 +90,21 @@ export function Select({
   onChange,
   options,
   className,
+  disabled,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string; disabled?: boolean }[];
   className?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className={cn("relative", className)}>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full cursor-pointer appearance-none rounded-control border border-line bg-panel-2 pl-3 pr-9 text-sm text-fg transition-colors hover:border-line-2 focus:border-accent focus:outline-none"
+        disabled={disabled}
+        className="h-10 w-full cursor-pointer appearance-none rounded-control border border-line bg-panel-2 pl-3 pr-9 text-sm text-fg transition-colors hover:border-line-2 focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled} className="bg-panel text-fg">

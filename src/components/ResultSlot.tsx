@@ -1,28 +1,50 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
+import { useLogStore } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
-import { cn, progressStageLabel } from "@/lib/utils";
+import { cn, progressStageLabel, visionProgressStageLabel } from "@/lib/utils";
 import { Icon } from "./icons";
 
 // Right-hand canvas slot for the generation lifecycle: a live progress card
 // while a job runs, then the freshly generated image once it lands. Mirrors
 // RefSlot's layout (connector badge + w-[min(320px,32vw)] column) while busy;
 // once a result lands the column widens so it reads as the clear focal point.
+// Also doubles as the "视觉反推" analysis slot: same card language (title +
+// percentage + stage text, or a red failure card), shown before any
+// generation job exists.
 export function ResultSlot() {
   const phase = useStudio((s) => s.phase);
   const progress = useStudio((s) => s.progress);
+  const error = useStudio((s) => s.error);
   const results = useStudio((s) => s.results);
   const resultIndex = useStudio((s) => s.resultIndex);
   const setResultIndex = useStudio((s) => s.setResultIndex);
   const openResults = useStudio((s) => s.openResults);
+  const closeSettings = useStudio((s) => s.closeSettings);
+  const closeHistory = useStudio((s) => s.closeHistory);
+  const analyzingVision = useStudio((s) => s.analyzingVision);
+  const visionProgress = useStudio((s) => s.visionProgress);
+  const visionError = useStudio((s) => s.visionError);
+  const openDiagnostics = useLogStore((s) => s.openPanel);
   const reduce = useReducedMotion();
 
+  const visionBusy = analyzingVision;
+  const visionFailed = !!visionError && !analyzingVision;
   const busy = phase === "submitting" || phase === "running";
   const success = phase === "success" && !!results?.length;
-  if (!busy && !success) return null;
+  const failed = phase === "error";
+  if (!visionBusy && !visionFailed && !busy && !success && !failed) return null;
+
+  function viewDiagnostics() {
+    // Diagnostics joins the same settings/history mutual-exclusion group.
+    closeSettings();
+    closeHistory();
+    openDiagnostics();
+  }
 
   const pct = Math.round(progress * 100);
+  const visionPct = Math.round(visionProgress * 100);
   const current = results && results[resultIndex] ? results[resultIndex] : results?.[0];
 
   return (
@@ -41,10 +63,42 @@ export function ResultSlot() {
       <div
         className={cn(
           "flex flex-col gap-3 transition-all duration-300",
-          busy ? "w-[min(320px,32vw)]" : "w-[min(480px,42vw)]",
+          visionBusy || visionFailed || busy || failed ? "w-[min(320px,32vw)]" : "w-[min(480px,42vw)]",
         )}
       >
-        {busy ? (
+        {visionBusy ? (
+          <motion.div
+            animate={reduce ? undefined : { opacity: [0.85, 1, 0.85] }}
+            transition={reduce ? undefined : { duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+            className="glass flex aspect-[3/4] min-h-[280px] w-full flex-col items-center justify-center gap-3 rounded-panel border border-line px-6 text-center"
+          >
+            <div className="text-sm font-medium text-fg-dim">视觉反推中</div>
+            <div className="text-4xl font-medium text-fg">{visionPct}%</div>
+            <div className="text-sm text-fg-dim">{visionProgressStageLabel(visionPct)}</div>
+            <div className="mt-1 h-1 w-full max-w-[180px] overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-500"
+                style={{ width: `${visionPct}%` }}
+              />
+            </div>
+          </motion.div>
+        ) : visionFailed ? (
+          <div className="glass flex aspect-[3/4] min-h-[280px] w-full flex-col items-center justify-center gap-3 rounded-panel border border-line px-6 text-center">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+              <Icon name="Warning" size={20} weight="bold" />
+            </span>
+            <div className="text-base font-medium text-fg">反推失败</div>
+            <p className="line-clamp-3 text-sm leading-relaxed text-fg-dim">{visionError || "未知错误，请重试"}</p>
+            <button
+              type="button"
+              onClick={viewDiagnostics}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-line-2 hover:text-fg"
+            >
+              <Icon name="Pulse" size={13} />
+              查看诊断台
+            </button>
+          </div>
+        ) : busy ? (
           <motion.div
             animate={reduce ? undefined : { opacity: [0.85, 1, 0.85] }}
             transition={reduce ? undefined : { duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
@@ -59,6 +113,22 @@ export function ResultSlot() {
               />
             </div>
           </motion.div>
+        ) : failed ? (
+          <div className="glass flex aspect-[3/4] min-h-[280px] w-full flex-col items-center justify-center gap-3 rounded-panel border border-line px-6 text-center">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+              <Icon name="Warning" size={20} weight="bold" />
+            </span>
+            <div className="text-base font-medium text-fg">生成失败</div>
+            <p className="line-clamp-3 text-sm leading-relaxed text-fg-dim">{error || "未知错误，请重试"}</p>
+            <button
+              type="button"
+              onClick={viewDiagnostics}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-line-2 hover:text-fg"
+            >
+              <Icon name="Pulse" size={13} />
+              查看诊断台
+            </button>
+          </div>
         ) : current ? (
           <>
             <button

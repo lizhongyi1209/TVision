@@ -59,3 +59,26 @@ export interface GenParams {
   billing: Billing;
   count: number;
 }
+
+/** Natural-pixel rect (padded, clamped) a local-repaint crop/composite operates on. */
+export interface InpaintBBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Live brush selection: a feathered alpha-mask PNG (natural image size) + its bounding box. */
+export interface InpaintMask {
+  maskUrl: string;
+  bboxPx: InpaintBBox;
+}
+
+/** Snapshot of the mask/bbox/source image taken at submit time, so a later mask edit
+ *  (e.g. the user reopens the brush panel while a job is still running) can't affect
+ *  how an in-flight job's results get composited back. */
+export interface InpaintJob {
+  origSrc: string;
+  bboxPx: InpaintBBox;
+  maskUrl: string;
+}

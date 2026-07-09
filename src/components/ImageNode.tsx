@@ -36,6 +36,7 @@ export function ImageNode() {
   const openMenu = useStudio((s) => s.openMenu);
   const closeMenu = useStudio((s) => s.closeMenu);
   const activeActionId = useStudio((s) => s.activeActionId);
+  const inpaintMask = useStudio((s) => s.inpaintMask);
   const phase = useStudio((s) => s.phase);
   const progress = useStudio((s) => s.progress);
   const reduce = useReducedMotion();
@@ -87,7 +88,7 @@ export function ImageNode() {
         )}
       />
 
-      {!busy && !menuOpen && !activeActionId ? (
+      {!busy && !menuOpen && !activeActionId && !inpaintMask ? (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}

@@ -8,21 +8,35 @@ import { Icon } from "./icons";
 
 const SPAN = 104; // degrees swept by the fan
 const R = 152;
+const BASE_N = 5; // pill count R/SPAN were originally tuned for (5 ACTIONS, no overlap)
+const R_STEP = 40; // extra radius per item beyond BASE_N — equal angle steps compress the
+// fan's y-spacing at its edges (sine curve), so more items need more room or the h-11
+// pills at the top/bottom of the arc start overlapping. Only kicks in past 5 items.
 
 function pos(i: number, n: number) {
+  const radius = n > BASE_N ? R + (n - BASE_N) * R_STEP : R;
   const ang = n > 1 ? ((-SPAN / 2 + i * (SPAN / (n - 1))) * Math.PI) / 180 : 0;
-  return { x: Math.cos(ang) * R, y: Math.sin(ang) * R };
+  return { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius };
 }
 
 // Local quick tools (left fan). AI actions from lib/actions fan out on the right.
-const TOOLS = [{ id: "crop", label: "裁剪", hint: "裁剪画布图片（默认 1:1）", icon: "Crop" }];
+const TOOLS = [
+  { id: "crop", label: "裁剪", hint: "裁剪画布图片（默认 1:1）", icon: "Crop" },
+  { id: "brush", label: "局部重绘", hint: "涂抹要修改的区域，仅重绘该区域", icon: "PaintBrush" },
+];
 
 // Two fans around the clicked image: quick edit tools on the left,
 // generation actions on the right.
 export function RadialMenu() {
   const choose = useStudio((s) => s.chooseAction);
   const openCrop = useStudio((s) => s.openCrop);
+  const openBrushPanel = useStudio((s) => s.openBrushPanel);
   const reduce = useReducedMotion();
+
+  function onTool(id: string) {
+    if (id === "crop") openCrop();
+    else if (id === "brush") openBrushPanel();
+  }
 
   const container: Variants = {
     hidden: {},
@@ -91,7 +105,7 @@ export function RadialMenu() {
                 variants={makeItem(-p.x, p.y)}
                 whileHover={reduce ? undefined : { scale: 1.06 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={openCrop}
+                onClick={() => onTool(t.id)}
                 title={t.hint}
                 className={cn(pill, "flex-row-reverse pl-4 pr-2")}
               >

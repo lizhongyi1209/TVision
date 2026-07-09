@@ -1,11 +1,14 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef } from "react";
 import { getAction } from "@/lib/actions";
+import { diag } from "@/lib/logStore";
 import { ASPECT_RATIOS, BILLINGS, comboError, MODELS, resolutionsFor } from "@/lib/models";
 import { useStudio } from "@/lib/store";
 import type { Billing, ModelName, Resolution } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, cropImageToDataURL, fakeVisionProgressCurve } from "@/lib/utils";
+import { VISION_MODELS } from "@/lib/visionModels";
 import { Icon } from "./icons";
 import { Button, Segmented, Select } from "./ui";
 
@@ -15,8 +18,17 @@ export function GenerateBar() {
   const updateParams = useStudio((s) => s.updateParams);
   const activeActionId = useStudio((s) => s.activeActionId);
   const refImage = useStudio((s) => s.refImage);
+  const inpaintMask = useStudio((s) => s.inpaintMask);
+  const setInpaintJob = useStudio((s) => s.setInpaintJob);
   const cancelAction = useStudio((s) => s.cancelAction);
   const phase = useStudio((s) => s.phase);
+  const analyzingVision = useStudio((s) => s.analyzingVision);
+  const visionStartedAt = useStudio((s) => s.visionStartedAt);
+  const visionRequestId = useStudio((s) => s.visionRequestId);
+  const beginVisionAnalysis = useStudio((s) => s.beginVisionAnalysis);
+  const setVisionProgress = useStudio((s) => s.setVisionProgress);
+  const finishVisionAnalysis = useStudio((s) => s.finishVisionAnalysis);
+  const failVisionAnalysis = useStudio((s) => s.failVisionAnalysis);
   const settings = useStudio((s) => s.settings);
   const openSettings = useStudio((s) => s.openSettings);
   const showToast = useStudio((s) => s.showToast);
@@ -30,7 +42,111 @@ export function GenerateBar() {
   const resOptions = resolutionsFor(params.model);
   const cErr = comboError(params.model, params.resolution, params.billing);
   const needsRefMissing = !!action?.needsRef && !refImage;
-  const canGenerate = !!image && !!params.prompt.trim() && !cErr && !needsRefMissing && !busy;
+  const canGenerate =
+    !!image &&
+    (!!params.prompt.trim() || !!action?.textToImage) &&
+    !cErr &&
+    !needsRefMissing &&
+    !busy &&
+    !analyzingVision;
+
+  // "视觉反推" fetch orchestration. Lives here (not RadialMenu, which
+  // unmounts the instant a pill is clicked) because GenerateBar's parent
+  // always renders it — only this component's own return value is
+  // conditionally null (below, after every hook), so its effects stay live
+  // and reactive regardless of whether `image` is currently set. Keying on
+  // [activeActionId, image?.src, visionRequestId] and aborting on cleanup
+  // covers every required cancellation trigger through one mechanism:
+  // cancelAction (activeActionId -> null), setImage/换图 (image?.src
+  // changes), switching to a different action, and true unmount.
+  useEffect(() => {
+    const currentAction = getAction(activeActionId);
+    if (!currentAction?.visionAnalysis || !image) return;
+    if (!useStudio.getState().settings?.hasApiKey) {
+      showToast("error", "请先在设置里填入 o1key 令牌");
+      openSettings();
+      return;
+    }
+
+    const controller = new AbortController();
+    // Belt-and-suspenders alongside AbortController: if the fetch settles in
+    // the narrow window between deps changing and abort() actually taking
+    // effect, this flag still stops us writing a stale result to the store.
+    // Same pattern already used by Studio.tsx's polling effect.
+    let cancelled = false;
+    const startedAt = Date.now();
+    const imgSrc = image.src;
+
+    beginVisionAnalysis();
+    diag("info", "视觉反推", `开始解析图片（模型 ${VISION_MODELS[0]}）`);
+
+    (async () => {
+      try {
+        const res = await fetch("/api/reverse-prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: imgSrc }),
+          signal: controller.signal,
+        }).then((r) => r.json());
+
+        if (cancelled) return;
+
+        if (res.error) {
+          failVisionAnalysis(res.error);
+          showToast("error", res.error);
+          diag("error", "视觉反推", "解析失败", res.detail || res.error);
+          return;
+        }
+
+        const prompt = res.prompt || "";
+        updateParams({ prompt });
+        finishVisionAnalysis();
+        const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+        diag(
+          "info",
+          "视觉反推",
+          `解析完成，耗时 ${secs}s，提示词 ${prompt.length} 字（模型 ${res.model || "?"}）`,
+          prompt,
+        );
+        if (res.parseWarning) {
+          showToast("info", "解析结果不是标准 JSON，已原样填入，请检查提示词");
+          diag("warn", "视觉反推", "解析结果不是标准 JSON，已原样填入");
+        } else {
+          showToast("success", "反推完成，请确认提示词后点击生成");
+        }
+      } catch (e) {
+        if (cancelled || (e as Error)?.name === "AbortError") return;
+        failVisionAnalysis("解析失败，请检查网络");
+        showToast("error", "解析失败，请检查网络");
+        diag("error", "视觉反推", "解析请求失败", (e as Error)?.message || String(e));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeActionId, image?.src, visionRequestId]);
+
+  // Fake-progress ticker for the vision-analysis card (ResultSlot), mirroring
+  // Studio.tsx's generation-progress ticker: a plain time-based curve, since
+  // vision analysis has no server-side status to poll.
+  const visionStartedAtRef = useRef(visionStartedAt);
+  visionStartedAtRef.current = visionStartedAt;
+  useEffect(() => {
+    if (!analyzingVision) return;
+    const tick = () => {
+      const started = visionStartedAtRef.current;
+      if (!started) return;
+      const seconds = (Date.now() - started) / 1000;
+      setVisionProgress(fakeVisionProgressCurve(seconds) / 100);
+    };
+    tick();
+    const id = setInterval(tick, 300);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analyzingVision]);
 
   function onModel(v: string) {
     const model = v as ModelName;
@@ -43,6 +159,10 @@ export function GenerateBar() {
 
   async function generate() {
     if (!image) return;
+    if (action?.textToImage && !params.prompt.trim()) {
+      showToast("error", "请先完成视觉反推或输入提示词");
+      return;
+    }
     if (!settings?.hasApiKey) {
       showToast("error", "请先在设置里填入 o1key 令牌");
       openSettings();
@@ -56,7 +176,70 @@ export function GenerateBar() {
       showToast("error", cErr);
       return;
     }
+
+    // Local repaint (brush selection active): crop just the padded bbox and
+    // submit that instead of the full canvas image; aspectRatio is forced to
+    // "auto" since the crop's own arbitrary aspect ratio must not get stretched
+    // to whatever ratio the (unrelated, now-disabled) selector last held.
+    let submitImage = image.src;
+    let submitAspect = params.aspectRatio;
+    if (inpaintMask) {
+      if (!params.prompt.trim()) {
+        showToast("error", "请先在对话框写明这块区域要改成什么");
+        return;
+      }
+      try {
+        const cropped = await cropImageToDataURL(
+          image.src,
+          { x: inpaintMask.bboxPx.x, y: inpaintMask.bboxPx.y, width: inpaintMask.bboxPx.w, height: inpaintMask.bboxPx.h },
+          0.92,
+        );
+        submitImage = cropped.dataUrl;
+        submitAspect = "auto";
+        // Snapshot now, not read live at composite time: if the user reopens
+        // the brush panel while this job is still running, inpaintMask could
+        // change before results land — the composite step must use the mask
+        // that was actually submitted.
+        setInpaintJob({ origSrc: image.src, bboxPx: inpaintMask.bboxPx, maskUrl: inpaintMask.maskUrl });
+        diag(
+          "info",
+          "局部重绘",
+          "提交局部重绘",
+          JSON.stringify(
+            {
+              bboxAreaRatio: Number(
+                ((inpaintMask.bboxPx.w * inpaintMask.bboxPx.h) / (image.width * image.height)).toFixed(3),
+              ),
+              promptLength: params.prompt.trim().length,
+            },
+            null,
+            2,
+          ),
+        );
+      } catch {
+        showToast("error", "裁剪涂抹区域失败，请重试");
+        return;
+      }
+    }
+
     beginSubmit();
+    diag(
+      "info",
+      "提交",
+      "提交生成请求",
+      JSON.stringify(
+        {
+          action: inpaintMask ? "局部重绘" : (action?.label ?? "自由提示词"),
+          model: params.model,
+          resolution: params.resolution,
+          aspectRatio: submitAspect,
+          billing: params.billing,
+          count: params.count,
+        },
+        null,
+        2,
+      ),
+    );
     try {
       const res = await fetch("/api/jobs", {
         method: "POST",
@@ -65,11 +248,12 @@ export function GenerateBar() {
           prompt: params.prompt,
           model: params.model,
           resolution: params.resolution,
-          aspectRatio: params.aspectRatio,
+          aspectRatio: submitAspect,
           billing: params.billing,
           count: params.count,
-          baseImage: image.src,
+          baseImage: action?.textToImage ? undefined : submitImage,
           refImage: refImage || undefined,
+          textOnly: action?.textToImage || undefined,
         }),
       }).then((r) => r.json());
 
@@ -77,14 +261,18 @@ export function GenerateBar() {
         setError(res.error);
         setPhase("error");
         showToast("error", res.error);
+        diag("error", "提交", "提交失败", res.error);
         return;
       }
-      setJobIds((res.jobs as { id: string }[]).map((j) => j.id));
+      const ids = (res.jobs as { id: string }[]).map((j) => j.id);
+      setJobIds(ids);
       setPhase("running");
+      diag("info", "提交", `已创建 ${ids.length} 个任务`, ids.join("\n"));
     } catch (e) {
       setError((e as Error).message);
       setPhase("error");
       showToast("error", "提交失败，请检查网络");
+      diag("error", "提交", "提交失败，请检查网络", (e as Error)?.message || String(e));
     }
   }
 
@@ -105,7 +293,12 @@ export function GenerateBar() {
             {action ? (
               <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] py-1 pl-2 pr-1 text-sm">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-accent">
-                  <Icon name={action.icon} size={13} weight="bold" />
+                  <Icon
+                    name={analyzingVision && action.visionAnalysis ? "CircleNotch" : action.icon}
+                    size={13}
+                    weight="bold"
+                    className={analyzingVision && action.visionAnalysis ? "animate-spin" : undefined}
+                  />
                 </span>
                 <span className="font-medium text-fg">{action.label}</span>
                 <button
@@ -119,16 +312,30 @@ export function GenerateBar() {
             ) : (
               <span className="text-sm text-fg-mute">未选操作 · 点击图片选操作，或直接写提示词</span>
             )}
+            {action?.textToImage ? (
+              <span className="text-xs text-fg-mute">仅用下方文字提示词生成，不使用原图作为参考</span>
+            ) : null}
           </div>
 
           {/* prompt */}
-          <textarea
-            value={params.prompt}
-            onChange={(e) => updateParams({ prompt: e.target.value })}
-            placeholder="描述你想要的效果，或保留操作自动生成的提示词…"
-            rows={2}
-            className="w-full resize-none rounded-control border border-line bg-panel-2/60 p-3 text-sm leading-relaxed text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none"
-          />
+          <div className="relative">
+            <textarea
+              value={params.prompt}
+              onChange={(e) => updateParams({ prompt: e.target.value })}
+              placeholder={analyzingVision ? "AI 正在解析图片，请稍候…" : "描述你想要的效果，或保留操作自动生成的提示词…"}
+              rows={2}
+              disabled={analyzingVision}
+              className={cn(
+                "w-full resize-none rounded-control border border-line bg-panel-2/60 p-3 text-sm leading-relaxed text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none",
+                analyzingVision && "cursor-not-allowed opacity-60",
+              )}
+            />
+            {analyzingVision ? (
+              <span className="pointer-events-none absolute right-3 top-3 text-accent">
+                <Icon name="CircleNotch" size={16} className="animate-spin" />
+              </span>
+            ) : null}
+          </div>
 
           {/* controls + generate */}
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -145,9 +352,14 @@ export function GenerateBar() {
               className="w-[92px]"
             />
             <Select
-              value={params.aspectRatio}
+              value={inpaintMask ? "auto" : params.aspectRatio}
               onChange={(v) => updateParams({ aspectRatio: v })}
-              options={ASPECT_RATIOS.map((a) => ({ value: a, label: a === "auto" ? "自动比例" : a }))}
+              options={
+                inpaintMask
+                  ? [{ value: "auto", label: "按涂抹区域" }]
+                  : ASPECT_RATIOS.map((a) => ({ value: a, label: a === "auto" ? "自动比例" : a }))
+              }
+              disabled={!!inpaintMask}
               className="w-[116px]"
             />
             <Select

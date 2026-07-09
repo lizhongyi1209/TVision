@@ -50,15 +50,26 @@ export function Stage() {
   const activeActionId = useStudio((s) => s.activeActionId);
   const phase = useStudio((s) => s.phase);
   const results = useStudio((s) => s.results);
+  const analyzingVision = useStudio((s) => s.analyzingVision);
+  const visionError = useStudio((s) => s.visionError);
   const showToast = useStudio((s) => s.showToast);
+  const inpaintMask = useStudio((s) => s.inpaintMask);
+  const openBrushPanel = useStudio((s) => s.openBrushPanel);
+  const clearInpaint = useStudio((s) => s.clearInpaint);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const action = getAction(activeActionId);
+  const jobBusy = phase === "submitting" || phase === "running";
   const resultVisible =
     !!image &&
-    (phase === "submitting" || phase === "running" || (phase === "success" && !!results?.length));
+    (analyzingVision ||
+      !!visionError ||
+      phase === "submitting" ||
+      phase === "running" ||
+      phase === "error" ||
+      (phase === "success" && !!results?.length));
   const refVisible = !!image && !!action?.needsRef;
 
   const addFile = useCallback(
@@ -138,6 +149,45 @@ export function Stage() {
           <div className={cn("relative shrink-0", resultVisible && "stage-image-compact")}>
             <ImageNode />
             <AnimatePresence>{menuOpen ? <RadialMenu /> : null}</AnimatePresence>
+            {inpaintMask && !menuOpen && !jobBusy ? (
+              <>
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute rounded-sm border-2 border-dashed border-accent bg-accent/10"
+                  style={{
+                    left: `${(inpaintMask.bboxPx.x / image.width) * 100}%`,
+                    top: `${(inpaintMask.bboxPx.y / image.height) * 100}%`,
+                    width: `${(inpaintMask.bboxPx.w / image.width) * 100}%`,
+                    height: `${(inpaintMask.bboxPx.h / image.height) * 100}%`,
+                  }}
+                />
+                <div className="absolute -bottom-11 left-1/2 flex -translate-x-1/2 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openBrushPanel();
+                    }}
+                    className="glass flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-fg hover:border-line-2"
+                  >
+                    <Icon name="PaintBrush" size={13} />
+                    重新涂抹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearInpaint();
+                    }}
+                    className="glass flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-fg-dim hover:text-fg"
+                    aria-label="取消局部重绘"
+                  >
+                    <Icon name="X" size={13} />
+                    取消
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
           <AnimatePresence>
             {refVisible ? <RefSlot key="ref" compact={resultVisible} /> : null}

@@ -24,9 +24,13 @@ export async function POST(req: Request) {
   const count = Math.max(1, Math.min(4, Number(body.count) || 1));
   const baseImage = typeof body.baseImage === "string" ? body.baseImage : "";
   const refImage = typeof body.refImage === "string" ? body.refImage : "";
+  // "视觉反推" and any future pure text-to-image action set this so the
+  // canvas image is never sent upstream, even though the canvas still has
+  // an image loaded (that's what the analysis was run against).
+  const textOnly = body.textOnly === true;
 
   if (!prompt) return NextResponse.json({ error: "缺少提示词" }, { status: 400 });
-  if (!baseImage) return NextResponse.json({ error: "缺少画布底图" }, { status: 400 });
+  if (!textOnly && !baseImage) return NextResponse.json({ error: "缺少画布底图" }, { status: 400 });
 
   let modelId: string;
   try {
@@ -35,8 +39,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }
 
-  const images = [baseImage];
-  if (refImage) images.push(refImage);
+  const images: string[] = [];
+  if (!textOnly) {
+    if (baseImage) images.push(baseImage);
+    if (refImage) images.push(refImage);
+  }
 
   const submitBody = buildSubmitBody({ modelId, prompt, resolution, aspectRatio, images });
   const bytes = Buffer.byteLength(JSON.stringify(submitBody), "utf-8");
