@@ -1,6 +1,6 @@
 # 批量工坊 · 执行进度快照（PLAN-BATCH-STATUS）
 
-> **T1–T8 已全部完成（2026-07-12 晚间续作收尾）**。设计定稿见 [PLAN-BATCH.md](./PLAN-BATCH.md)；任务总账与打勾在 [DEV-PLAN.md](./DEV-PLAN.md) F4；当日详细改动记录见 HANDOFF.md 的「批量工坊 · F4 全量落地」条目。
+> **T1–T8 已全部完成（2026-07-12 晚间续作收尾）**。设计定稿见 [PLAN-BATCH.md](./PLAN-BATCH.md)；任务总账与打勾在 [DEV-PLAN.md](../DEV-PLAN.md) F4；当日详细改动记录见 HANDOFF.md 的「批量工坊 · F4 全量落地」条目。
 > **工作树状态：可编译、可运行。** `npx tsc --noEmit` 零错误、`npm run test:unit` 28/28 通过、`npm run build` 通过（首屏 103kB），3000 端口的 `next start` 已重启到新构建（2026-07-12 验证）。
 
 ## 一、已完成（T1–T8）

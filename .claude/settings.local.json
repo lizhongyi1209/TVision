@@ -153,7 +153,11 @@
       "Bash(ls -la .npmrc)",
       "Bash(iconv -f GBK -t UTF-8 \"拉取最新版本.bat\")",
       "Bash(netstat -ano -p tcp)",
-      "Bash(awk '{print $2}')"
+      "Bash(awk '{print $2}')",
+      "Bash(tasklist //FI \"PID eq 8948\")",
+      "Bash(cmd //c start \"TVision Server\" //min cmd //c \"npm run start\")",
+      "Bash(sed -i 's|]\\(\\\\./DEV-PLAN\\\\.md\\)|]\\(../DEV-PLAN.md\\)|g; s|]\\(\\\\./DEV-ERRORS\\\\.md\\)|]\\(../DEV-ERRORS.md\\)|g; s|]\\(\\\\./HANDOFF\\\\.md\\)|]\\(../HANDOFF.md\\)|g' plan/PLAN-BATCH.md plan/PLAN-BATCH-STATUS.md plan/PLAN-MULTI-REF.md)",
+      "Bash(sed -i 's|]\\(\\\\./PLAN-BATCH\\\\.md\\)|]\\(./plan/PLAN-BATCH.md\\)|g; s|]\\(\\\\./PLAN-BATCH-STATUS\\\\.md\\)|]\\(./plan/PLAN-BATCH-STATUS.md\\)|g; s|]\\(\\\\./PLAN-MULTI-REF\\\\.md\\)|]\\(./plan/PLAN-MULTI-REF.md\\)|g; s|]\\(\\\\./PLAN-INPAINT-FIX\\\\.md\\)|]\\(./plan/PLAN-INPAINT-FIX.md\\)|g' DEV-PLAN.md)"
     ]
   }
 }

@@ -7,7 +7,7 @@
 
 ## 进行中
 
-### F4 批量工坊（批量换装 1×N + 全匹配 M×N）　→ 设计定稿：[PLAN-BATCH.md](./PLAN-BATCH.md) · 执行快照：[PLAN-BATCH-STATUS.md](./PLAN-BATCH-STATUS.md)
+### F4 批量工坊（批量换装 1×N + 全匹配 M×N）　→ 设计定稿：[PLAN-BATCH.md](./plan/PLAN-BATCH.md) · 执行快照：[PLAN-BATCH-STATUS.md](./plan/PLAN-BATCH-STATUS.md)
 
 统一工坊：模特栏 + 服装墙，1 模特=批量模式（自适应网格全同屏），≥2 模特=全匹配矩阵；每组合一次独立提交，格子即进度，就地重试，打包下载。草图与两项关键取舍（统一工坊 / 服装墙全同屏）已于 2026-07-12 经用户确认。T1–T3 于 2026-07-12 上午落地，T4–T8 当日晚间续作完成；`tsc` 零错误、单测 28/28 过、`npm run build` 通过。浏览器端交互与真实令牌实跑（验收清单 2-9 项）留用户本机验证。
 
@@ -39,7 +39,7 @@
 
 **本轮未做（有意搁置）**：`quality` UI 选项、`n>1` 单任务多图、gpt-image-2 原生 `mask` 参数（与现有裁剪回贴局部重绘方案不冲突，可留二期）、`error_detail.retryable` 驱动的自动重试。
 
-### F2 多参考图 · 自由创作　→ 设计定稿：[PLAN-MULTI-REF.md](./PLAN-MULTI-REF.md)
+### F2 多参考图 · 自由创作　→ 设计定稿：[PLAN-MULTI-REF.md](./plan/PLAN-MULTI-REF.md)
 
 不选预设操作，直接传多张参考图 + 自写提示词生成。主图=第 1 张图，参考图带序号徽标，上限 8 张（原定 6，2026-07-12 按用户要求调至"含主图共 9 张"）。
 
@@ -53,7 +53,7 @@
       　→ 已过：`npx tsc --noEmit` 零错误；`npm run build` 编译通过（首屏 92.5kB，无类型/lint 错误）。清单第 2-7 项（拖 3 张编号、真实生成 refs/refCount 落地、上限 toast、移序/删除即时刷新、预设回归、超大图报错可见）已逐条代码走查确认逻辑自洽，但需要真实浏览器交互 + 有效 o1key 令牌才能实跑，本轮执行环境不具备，留待用户在本机手动过一遍
 - [x] T7 文档收尾：HANDOFF 追加、README 用法、本文件打勾
 
-### F1 局部重绘历史修复　→ 设计定稿：[PLAN-INPAINT-FIX.md](./PLAN-INPAINT-FIX.md)
+### F1 局部重绘历史修复　→ 设计定稿：[PLAN-INPAINT-FIX.md](./plan/PLAN-INPAINT-FIX.md)
 
 - [x] 六步代码实施（Stage 原始字节直存 / 提交边界降采样 / PNG 无损合成 / PUT /api/media 回传 / 裁剪 PNG）
 - [ ] 验收：`npx tsc --noEmit` + 手动链路（>1800px 原图局部重绘 → 历史为原分辨率完整 PNG；×2 张、普通生成、视觉反推、裁剪全回归）

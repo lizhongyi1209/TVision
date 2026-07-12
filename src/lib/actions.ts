@@ -88,6 +88,21 @@ export const ACTIONS: StudioAction[] = [
       "Identify the lower garment (pants, trousers, jeans, shorts or skirt) in the image and render it as a professional e-commerce flat-lay product photo. If a person is wearing the garment, remove the person entirely and reconstruct the complete garment, including any parts hidden by the pose or by the upper garment. If the garment appears on its own — wrinkled, crumpled, folded or on a hanger — use that exact same garment. Lay it perfectly flat on a clean, pure white (#FFFFFF) seamless background, photographed directly from above: fully smoothed with no wrinkles, legs neatly aligned in a natural catalog style, waistband at the top in its natural shape. Faithfully preserve the garment's exact cut, color, fabric texture, wash, pattern, prints, logos, label text, buttons, zippers, pockets and stitching. The source photo may have a color cast from warm indoor lighting or colored reflections — correct for this: infer the garment's true color as it would appear under neutral, daylight-balanced studio lighting and reproduce that exact hue, saturation and tone. Do not lighten, bleach, darken, oversaturate or shift the color toward a typical catalog wash; the garment in the output must read as unmistakably the same color as the garment in the source photo. Soft, even studio lighting with a subtle natural contact shadow. Sharp, high-detail commercial product photography. Output only the flat-lay garment — no person, no mannequin, no props.",
   },
   {
+    id: "garment-3d",
+    label: "服装转3D",
+    hint: "提取上衣生成专业 3D 立体展示，平铺图 / 模特图皆可",
+    icon: "Cube",
+    needsRef: false,
+    refLabel: "",
+    refHint: "",
+    defaultAspect: "1:1",
+    defaultCount: 1,
+    defaultResolution: "4K",
+    defaultModel: "Nano Banana Pro",
+    buildPrompt: () =>
+      "Identify the upper garment (top, shirt, t-shirt, jacket, hoodie, sweater or dress) in the image and render it as a professional 3D garment visualization, in the exact style of industry-standard apparel design software such as CLO 3D, Style3D or Browzwear. If a person is wearing it, remove the person entirely and reconstruct the complete upper garment, including any parts hidden by arms, pose or tucking; discard everything else in the photo. If the garment appears on its own — flat, wrinkled, folded or on a hanger — use that exact same garment. Present the garment completely alone, upright and perfectly centered, viewed straight-on from the front in a symmetrical composition — no side angle, no rotation, no tilt. Give it clean three-dimensional volume: the body and sleeves softly rounded and filled so the garment holds its natural silhouette and depth entirely on its own, with a smooth, fully steamed surface — no wrinkles, no creases, no draping folds; crisp, clean panels like a freshly pressed digital garment sample. Faithfully preserve the garment's exact design, silhouette, proportions, color, fabric texture and weave, pattern, prints, logos, label text, buttons, zippers, pockets, trims and stitching. The source photo may have a color cast from warm indoor lighting or colored reflections — correct for this: infer the garment's true color as it would appear under neutral, daylight-balanced studio lighting and reproduce that exact hue, saturation and tone. Do not lighten, bleach, darken, oversaturate or shift the color. Set it against a clean, light neutral gray (#F2F2F2) seamless studio backdrop with soft, even, physically-based studio lighting and no cast shadow. Photorealistic 3D rendering quality: crisp fabric micro-detail, accurate material response for cotton, denim, knit, leather or synthetics, sharp focus, high resolution. Output only the upper garment and nothing else — strictly no person, no mannequin, no body, no body parts, no head, no neck, no hands, no legs, no feet, no shoes, no lower garment, no props, no text or watermarks.",
+  },
+  {
     id: "swap-bg",
     label: "换背景",
     hint: "把主体合成到参考背景中",

@@ -1,11 +1,11 @@
 # 开发设计 · 多参考图自由创作（PLAN-MULTI-REF）
 
 > 需求：不选任何预设操作，一上来直接传多张参考图，自己写提示词与参数完成生成。
-> 本文档为定稿设计，按此实施即可；任务打勾在 [DEV-PLAN.md](./DEV-PLAN.md)，踩坑记 [DEV-ERRORS.md](./DEV-ERRORS.md)。
+> 本文档为定稿设计，按此实施即可；任务打勾在 [DEV-PLAN.md](../DEV-PLAN.md)，踩坑记 [DEV-ERRORS.md](../DEV-ERRORS.md)。
 
 ## 执行状态（2026-07-12）
 
-T1–T5、T7 已实施完成（代码改动见下方 T1–T7 各节涉及的文件）；T6 验收中的自动化部分（`npx tsc --noEmit` 零错误、`npm run build` 编译通过）已过，清单第 2-7 项已逐条代码走查确认调用链自洽，但需要真实浏览器交互 + 有效 o1key 令牌才能完整实跑，本轮执行环境不具备，**留待用户在本机手动验证**。实施中额外发现并修复一处不在原规格文字里的 bug（`RefSlot.tsx` 上传/追加框未挡 drop 事件冒泡，详见 [DEV-ERRORS.md](./DEV-ERRORS.md) 2026-07-12 条目）。详细任务打勾见 [DEV-PLAN.md](./DEV-PLAN.md)，当日实施记录见 [HANDOFF.md](./HANDOFF.md)。
+T1–T5、T7 已实施完成（代码改动见下方 T1–T7 各节涉及的文件）；T6 验收中的自动化部分（`npx tsc --noEmit` 零错误、`npm run build` 编译通过）已过，清单第 2-7 项已逐条代码走查确认调用链自洽，但需要真实浏览器交互 + 有效 o1key 令牌才能完整实跑，本轮执行环境不具备，**留待用户在本机手动验证**。实施中额外发现并修复一处不在原规格文字里的 bug（`RefSlot.tsx` 上传/追加框未挡 drop 事件冒泡，详见 [DEV-ERRORS.md](../DEV-ERRORS.md) 2026-07-12 条目）。详细任务打勾见 [DEV-PLAN.md](../DEV-PLAN.md)，当日实施记录见 [HANDOFF.md](../HANDOFF.md)。
 
 **上线后按用户反馈迭代 3 轮（详见 DEV-ERRORS/HANDOFF 同日追加条目），以下与定稿正文不一致处以此为准：**
 1. 缩略图展示：`object-cover` 裁切 → `object-contain` → 最终定稿**自适应比例卡片**（卡片贴合图片真实比例，仅设高度上限，用户草图确认）。

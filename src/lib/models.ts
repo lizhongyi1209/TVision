@@ -13,9 +13,9 @@ export interface ModelInfo {
 
 export const MODELS: ModelInfo[] = [
   { name: "Nano Banana Pro", resolutions: ["1K", "2K", "4K"], blurb: "质量最佳 · 推荐" },
-  { name: "Nano Banana 2", resolutions: ["512", "1K", "2K", "4K"], blurb: "支持 512 与极端比例" },
-  { name: "Nano Banana", resolutions: ["1K"], blurb: "仅特价" },
-  { name: "GPT Image 2", resolutions: ["1K", "2K", "4K"], blurb: "语义理解强" },
+  { name: "Nano Banana 2", resolutions: ["512", "1K", "2K", "4K"], blurb: "快速批量 · 最新" },
+  { name: "Nano Banana", resolutions: ["1K"], blurb: "普通质量 · 初代" },
+  { name: "GPT Image 2", resolutions: ["1K", "2K", "4K"], blurb: "文字和真实感出色" },
 ];
 
 /** GPT Image 2 has no aspect_ratio param — the exact pixel size for a given
