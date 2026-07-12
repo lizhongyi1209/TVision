@@ -75,12 +75,17 @@ export function CropPanel() {
             };
       const nw = el.naturalWidth;
       const nh = el.naturalHeight;
-      const res = await cropImageToDataURL(image.src, {
-        x: (pc.x / 100) * nw,
-        y: (pc.y / 100) * nh,
-        width: (pc.width / 100) * nw,
-        height: (pc.height / 100) * nh,
-      });
+      const res = await cropImageToDataURL(
+        image.src,
+        {
+          x: (pc.x / 100) * nw,
+          y: (pc.y / 100) * nh,
+          width: (pc.width / 100) * nw,
+          height: (pc.height / 100) * nh,
+        },
+        undefined,
+        "image/png",
+      );
       replaceImage({ src: res.dataUrl, width: res.width, height: res.height });
       showToast("success", `裁剪完成 · ${res.width}×${res.height}`);
     } catch {

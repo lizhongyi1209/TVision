@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { readSettings } from "@/lib/settings";
-import { buildModelId, buildSubmitBody, MAX_BODY_BYTES, resolveBaseUrl, submitTask } from "@/lib/o1key";
+import {
+  buildGptImageSubmitBody,
+  buildModelId,
+  buildSubmitBody,
+  isGptImage2,
+  MAX_BODY_BYTES,
+  resolveBaseUrl,
+  submitTask,
+} from "@/lib/o1key";
 import { appendMeta } from "@/lib/historyMeta";
-import type { Billing, ModelName, Resolution } from "@/lib/types";
+import { MAX_REF_IMAGES } from "@/lib/limits";
+import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,12 +31,22 @@ export async function POST(req: Request) {
   const aspectRatio = String(body.aspectRatio ?? s.defaults.aspectRatio);
   const billing = String(body.billing ?? s.defaults.billing);
   const count = Math.max(1, Math.min(4, Number(body.count) || 1));
+  const quality = String(body.quality ?? "auto");
   const baseImage = typeof body.baseImage === "string" ? body.baseImage : "";
-  const refImage = typeof body.refImage === "string" ? body.refImage : "";
+  // Free-form multi-reference mode (PLAN-MULTI-REF): images[] order is base
+  // image first, then refImages in their stored order, matching actions.ts's
+  // "the first image / the second image…" prompt-wording convention.
+  const refImages = Array.isArray(body.refImages)
+    ? body.refImages.filter((x): x is string => typeof x === "string" && !!x).slice(0, MAX_REF_IMAGES)
+    : [];
   // "视觉反推" and any future pure text-to-image action set this so the
   // canvas image is never sent upstream, even though the canvas still has
   // an image loaded (that's what the analysis was run against).
   const textOnly = body.textOnly === true;
+  // Batch workshop only (PLAN-BATCH D8): a "服装文件名 · 模特N" label recorded
+  // into the history sidecar so batch results stay tellable-apart. Record-only
+  // — never forwarded upstream. Capped to keep the sidecar tidy.
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 120) : "";
 
   if (!prompt) return NextResponse.json({ error: "缺少提示词" }, { status: 400 });
   if (!textOnly && !baseImage) return NextResponse.json({ error: "缺少画布底图" }, { status: 400 });
@@ -42,10 +61,21 @@ export async function POST(req: Request) {
   const images: string[] = [];
   if (!textOnly) {
     if (baseImage) images.push(baseImage);
-    if (refImage) images.push(refImage);
+    images.push(...refImages);
   }
 
-  const submitBody = buildSubmitBody({ modelId, prompt, resolution, aspectRatio, images });
+  const submitBody = isGptImage2(model)
+    ? buildGptImageSubmitBody({
+        modelId,
+        prompt,
+        resolution,
+        aspectRatio,
+        images,
+        quality: (["auto", "high", "medium", "low"] as const).includes(quality as Quality)
+          ? (quality as Quality)
+          : "auto",
+      })
+    : buildSubmitBody({ modelId, prompt, resolution, aspectRatio, images });
   const bytes = Buffer.byteLength(JSON.stringify(submitBody), "utf-8");
   if (bytes > MAX_BODY_BYTES) {
     return NextResponse.json(
@@ -66,6 +96,9 @@ export async function POST(req: Request) {
       aspectRatio,
       billing: billing as Billing,
       count,
+      refCount: refImages.length,
+      quality: isGptImage2(model) ? (quality as Quality) : undefined,
+      note: note || undefined,
     });
     return NextResponse.json({ jobs: ids.map((id, index) => ({ id, index })), modelId });
   } catch (e) {

@@ -5,6 +5,13 @@ export function cn(...inputs: ClassValue[]): string {
   return clsx(inputs);
 }
 
+/** Strip a trailing file extension for display labels (batch workshop tile
+ *  badges, download/note names) — "红色连衣裙.jpg" -> "红色连衣裙". Files with
+ *  no recognized extension pass through untouched. */
+export function stripExt(filename: string): string {
+  return filename.replace(/\.(png|jpe?g|webp|gif|bmp|avif)$/i, "");
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -22,6 +29,16 @@ export interface DownscaledImage {
   dataUrl: string;
   width: number;
   height: number;
+}
+
+/** Read a file/blob as-is into a data URL — no re-encoding, no resizing. Browser-only. */
+export function fileToDataURL(file: File | Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("读取图片失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 /**
@@ -100,6 +117,40 @@ export function visionProgressStageLabel(progress: number): string {
   return "整理提示词…";
 }
 
+export interface GridPacking {
+  cols: number;
+  rows: number;
+  cellW: number;
+  cellH: number;
+}
+
+/**
+ * Choose a column count for `n` uniform tiles inside a `w`×`h` box (with
+ * `gap` between tiles) that maximizes the tile's shorter edge — the
+ * "everything fits on screen at the largest readable size, never scrolls"
+ * packing used by the batch workshop's garment wall (PLAN-BATCH D6:
+ * "枚举列数取「最小格边长最大」的方案"). Enumerates every column count from 1
+ * to n (O(n), n is capped at MAX_BATCH_GARMENTS + 1 by the caller) and keeps
+ * whichever minimizes wasted space. Returns a zero-size 1×1 box for n<=0 or
+ * a box with no room, rather than throwing.
+ */
+export function packGrid(n: number, w: number, h: number, gap = 8): GridPacking {
+  if (n <= 0 || w <= 0 || h <= 0) return { cols: 1, rows: 1, cellW: 0, cellH: 0 };
+  let best: GridPacking = { cols: 1, rows: n, cellW: w, cellH: Math.max(0, (h - gap * (n - 1)) / n) };
+  let bestEdge = Math.min(best.cellW, best.cellH);
+  for (let cols = 2; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const cellW = Math.max(0, (w - gap * (cols - 1)) / cols);
+    const cellH = Math.max(0, (h - gap * (rows - 1)) / rows);
+    const edge = Math.min(cellW, cellH);
+    if (edge > bestEdge) {
+      bestEdge = edge;
+      best = { cols, rows, cellW, cellH };
+    }
+  }
+  return best;
+}
+
 export function downloadUrl(url: string, filename: string): void {
   const a = document.createElement("a");
   a.href = url;
@@ -120,11 +171,14 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Crop a region (natural-pixel rect) out of an image src into a JPEG data URL. Browser-only. */
+/** Crop a region (natural-pixel rect) out of an image src into a JPEG (default) or
+ *  PNG data URL. PNG mode skips the white-background fill and preserves alpha;
+ *  quality is ignored in that case. Browser-only. */
 export async function cropImageToDataURL(
   src: string,
   rect: { x: number; y: number; width: number; height: number },
   quality = 0.94,
+  format: "image/jpeg" | "image/png" = "image/jpeg",
 ): Promise<DownscaledImage> {
   const img = await loadImage(src);
   const sx = Math.min(Math.max(0, Math.round(rect.x)), img.naturalWidth - 1);
@@ -136,10 +190,43 @@ export async function cropImageToDataURL(
   canvas.height = sh;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法创建画布上下文");
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, sw, sh);
+  if (format === "image/jpeg") {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, sw, sh);
+  }
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-  return { dataUrl: canvas.toDataURL("image/jpeg", quality), width: sw, height: sh };
+  const dataUrl = format === "image/png" ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", quality);
+  return { dataUrl, width: sw, height: sh };
+}
+
+/**
+ * Downscale + recompress an already full-resolution canvas src (data URL or
+ * same-origin URL) to a JPEG data URL under a max dimension. Unlike
+ * fileToDownscaledDataURL (which shrinks a freshly-picked File), this sits at
+ * the network/submit boundary only — the canvas itself keeps the original,
+ * full-resolution image; this produces a separate, smaller copy just for the
+ * request payload. Transparent areas are flattened onto white. Browser-only.
+ */
+export async function downscaleImageSrc(
+  src: string,
+  maxDim = 1600,
+  quality = 0.92,
+): Promise<DownscaledImage> {
+  const img = await loadImage(src);
+  const { naturalWidth: width, naturalHeight: height } = img;
+  const scale = Math.min(1, maxDim / Math.max(width, height));
+  const w = Math.max(1, Math.round(width * scale));
+  const h = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法创建画布上下文");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const dataUrl = canvas.toDataURL("image/jpeg", quality);
+  return { dataUrl, width: w, height: h };
 }
 
 /**
@@ -150,8 +237,15 @@ export async function cropImageToDataURL(
  * onto a full copy of the original image. Throws on any decode/canvas failure —
  * callers should fall back to the raw, uncomposited result on a per-image basis
  * rather than failing an entire batch (see Studio.tsx's polling `finish()`).
+ * The output canvas keeps the original image's exact pixel dimensions
+ * (orig.naturalWidth × orig.naturalHeight) and is exported as a lossless PNG
+ * blob (not re-compressed JPEG), so the composited result never loses
+ * resolution or gains new compression artifacts versus the source.
  */
-export async function compositeInpaintResult(job: InpaintJob, resultSrc: string): Promise<string> {
+export async function compositeInpaintResult(
+  job: InpaintJob,
+  resultSrc: string,
+): Promise<{ url: string; blob: Blob }> {
   const [orig, mask, result] = await Promise.all([loadImage(job.origSrc), loadImage(job.maskUrl), loadImage(resultSrc)]);
   const { x, y, w, h } = job.bboxPx;
 
@@ -175,5 +269,7 @@ export async function compositeInpaintResult(job: InpaintJob, resultSrc: string)
   mctx.drawImage(orig, 0, 0);
   mctx.drawImage(block, x, y);
 
-  return main.toDataURL("image/jpeg", 0.94);
+  const blob = await new Promise<Blob | null>((resolve) => main.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("导出合成图失败");
+  return { url: URL.createObjectURL(blob), blob };
 }

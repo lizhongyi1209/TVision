@@ -4,12 +4,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { getAction } from "@/lib/actions";
 import { diag } from "@/lib/logStore";
-import { ASPECT_RATIOS, BILLINGS, comboError, MODELS, resolutionsFor } from "@/lib/models";
+import { ASPECT_RATIOS, BILLINGS, comboError, GPT_IMAGE_2_RATIOS, MODELS, QUALITY_OPTIONS, resolutionsFor } from "@/lib/models";
 import { useStudio } from "@/lib/store";
-import type { Billing, ModelName, Resolution } from "@/lib/types";
-import { cn, cropImageToDataURL, fakeVisionProgressCurve } from "@/lib/utils";
+import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
+import { cn, cropImageToDataURL, downscaleImageSrc, fakeVisionProgressCurve } from "@/lib/utils";
 import { VISION_MODELS } from "@/lib/visionModels";
 import { Icon } from "./icons";
+import { ModelIcon } from "./modelIcons";
 import { Button, Segmented, Select } from "./ui";
 
 export function GenerateBar() {
@@ -17,7 +18,7 @@ export function GenerateBar() {
   const params = useStudio((s) => s.params);
   const updateParams = useStudio((s) => s.updateParams);
   const activeActionId = useStudio((s) => s.activeActionId);
-  const refImage = useStudio((s) => s.refImage);
+  const refImages = useStudio((s) => s.refImages);
   const inpaintMask = useStudio((s) => s.inpaintMask);
   const setInpaintJob = useStudio((s) => s.setInpaintJob);
   const cancelAction = useStudio((s) => s.cancelAction);
@@ -40,8 +41,8 @@ export function GenerateBar() {
   const action = getAction(activeActionId);
   const busy = phase === "submitting" || phase === "running";
   const resOptions = resolutionsFor(params.model);
-  const cErr = comboError(params.model, params.resolution, params.billing);
-  const needsRefMissing = !!action?.needsRef && !refImage;
+  const cErr = comboError(params.model, params.resolution, params.billing, params.aspectRatio);
+  const needsRefMissing = !!action?.needsRef && refImages.length === 0;
   const canGenerate =
     !!image &&
     (!!params.prompt.trim() || !!action?.textToImage) &&
@@ -82,10 +83,11 @@ export function GenerateBar() {
 
     (async () => {
       try {
+        const { dataUrl: submitSrc } = await downscaleImageSrc(imgSrc, 1600, 0.92);
         const res = await fetch("/api/reverse-prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: imgSrc }),
+          body: JSON.stringify({ image: submitSrc }),
           signal: controller.signal,
         }).then((r) => r.json());
 
@@ -154,7 +156,14 @@ export function GenerateBar() {
     const resolution = rs.includes(params.resolution) ? params.resolution : rs[0];
     let billing = params.billing;
     if (comboError(model, resolution, billing) && !comboError(model, resolution, "特价")) billing = "特价";
-    updateParams({ model, resolution, billing });
+    // GPT Image 2 has no aspect_ratio param — fall back to "auto" when the
+    // ratio carried over from the previous model isn't in its preset table.
+    let aspectRatio = params.aspectRatio;
+    if (model === "GPT Image 2" && !GPT_IMAGE_2_RATIOS.includes(aspectRatio)) {
+      aspectRatio = "auto";
+      showToast("info", "已调整为 GPT Image 2 支持的比例");
+    }
+    updateParams({ model, resolution, billing, aspectRatio });
   }
 
   async function generate() {
@@ -195,6 +204,9 @@ export function GenerateBar() {
           0.92,
         );
         submitImage = cropped.dataUrl;
+        if (Math.max(cropped.width, cropped.height) > 2048) {
+          submitImage = (await downscaleImageSrc(cropped.dataUrl, 2048, 0.92)).dataUrl;
+        }
         submitAspect = "auto";
         // Snapshot now, not read live at composite time: if the user reopens
         // the brush panel while this job is still running, inpaintMask could
@@ -220,6 +232,13 @@ export function GenerateBar() {
         showToast("error", "裁剪涂抹区域失败，请重试");
         return;
       }
+    } else if (!action?.textToImage) {
+      try {
+        submitImage = (await downscaleImageSrc(image.src, 1800, 0.94)).dataUrl;
+      } catch {
+        showToast("error", "读取图片失败，请重试");
+        return;
+      }
     }
 
     beginSubmit();
@@ -235,6 +254,8 @@ export function GenerateBar() {
           aspectRatio: submitAspect,
           billing: params.billing,
           count: params.count,
+          quality: params.model === "GPT Image 2" ? params.quality : undefined,
+          refs: refImages.length,
         },
         null,
         2,
@@ -251,8 +272,9 @@ export function GenerateBar() {
           aspectRatio: submitAspect,
           billing: params.billing,
           count: params.count,
+          quality: params.model === "GPT Image 2" ? params.quality : undefined,
           baseImage: action?.textToImage ? undefined : submitImage,
-          refImage: refImage || undefined,
+          refImages: refImages.length && !inpaintMask ? refImages : undefined,
           textOnly: action?.textToImage || undefined,
         }),
       }).then((r) => r.json());
@@ -309,6 +331,10 @@ export function GenerateBar() {
                   <Icon name="X" size={13} />
                 </button>
               </span>
+            ) : refImages.length > 0 ? (
+              <span className="text-sm text-fg-mute">
+                自由创作 · 已附 {refImages.length} 张参考图（提示词可用"第 2 张图"指代）
+              </span>
             ) : (
               <span className="text-sm text-fg-mute">未选操作 · 点击图片选操作，或直接写提示词</span>
             )}
@@ -342,8 +368,13 @@ export function GenerateBar() {
             <Select
               value={params.model}
               onChange={onModel}
-              options={MODELS.map((m) => ({ value: m.name, label: m.name }))}
-              className="w-[168px]"
+              options={MODELS.map((m) => ({
+                value: m.name,
+                label: m.name,
+                hint: m.blurb,
+                icon: <ModelIcon model={m.name} size={16} />,
+              }))}
+              className="w-[184px]"
             />
             <Select
               value={params.resolution}
@@ -357,7 +388,11 @@ export function GenerateBar() {
               options={
                 inpaintMask
                   ? [{ value: "auto", label: "按涂抹区域" }]
-                  : ASPECT_RATIOS.map((a) => ({ value: a, label: a === "auto" ? "自动比例" : a }))
+                  : ASPECT_RATIOS.map((a) => ({
+                      value: a,
+                      label: a === "auto" ? "自动比例" : a,
+                      disabled: params.model === "GPT Image 2" && !GPT_IMAGE_2_RATIOS.includes(a),
+                    }))
               }
               disabled={!!inpaintMask}
               className="w-[116px]"
@@ -368,6 +403,14 @@ export function GenerateBar() {
               options={BILLINGS.map((b) => ({ value: b, label: b }))}
               className="w-[88px]"
             />
+            {params.model === "GPT Image 2" ? (
+              <Select
+                value={params.quality}
+                onChange={(v) => updateParams({ quality: v as Quality })}
+                options={QUALITY_OPTIONS}
+                className="w-[88px]"
+              />
+            ) : null}
             <Segmented
               value={params.count}
               onChange={(v) => updateParams({ count: v })}

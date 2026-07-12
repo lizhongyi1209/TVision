@@ -39,6 +39,7 @@ export function HistoryRail() {
           aspectRatio: it.meta.aspectRatio,
           billing: it.meta.billing,
           count: it.meta.count,
+          quality: it.meta.quality ?? "auto",
         });
         showToast("success", "已载入画布，并还原当时的提示词与参数");
       } else {

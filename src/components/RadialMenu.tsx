@@ -19,23 +19,37 @@ function pos(i: number, n: number) {
   return { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius };
 }
 
-// Local quick tools (left fan). AI actions from lib/actions fan out on the right.
+// Local quick tools (left fan). AI actions from lib/actions fan out on the
+// right — except 视觉反推, which sits on the left alongside 裁剪/局部重绘
+// (2026-07-12 user request): it's still a StudioAction (goes through
+// chooseAction, keeps its async vision-analysis flow), just rendered in the
+// left fan instead of the right one.
 const TOOLS = [
   { id: "crop", label: "裁剪", hint: "裁剪画布图片（默认 1:1）", icon: "Crop" },
   { id: "brush", label: "局部重绘", hint: "涂抹要修改的区域，仅重绘该区域", icon: "PaintBrush" },
 ];
 
-// Two fans around the clicked image: quick edit tools on the left,
-// generation actions on the right.
+// Two fans around the clicked image: quick edit tools (+ 视觉反推) on the
+// left, generation actions on the right.
 export function RadialMenu() {
   const choose = useStudio((s) => s.chooseAction);
   const openCrop = useStudio((s) => s.openCrop);
   const openBrushPanel = useStudio((s) => s.openBrushPanel);
   const reduce = useReducedMotion();
 
-  function onTool(id: string) {
+  // 视觉反推 is pulled out of ACTIONS (right fan) and appended to the left
+  // fan's item list below — same click target (chooseAction) as any other
+  // action, just placed on the other side visually.
+  const reverseAction = ACTIONS.find((a) => a.id === "reverse-prompt");
+  const rightActions = ACTIONS.filter((a) => a.id !== "reverse-prompt");
+  const leftItems = reverseAction
+    ? [...TOOLS, { id: reverseAction.id, label: reverseAction.label, hint: reverseAction.hint, icon: reverseAction.icon }]
+    : TOOLS;
+
+  function onLeftItem(id: string) {
     if (id === "crop") openCrop();
     else if (id === "brush") openBrushPanel();
+    else choose(id); // 视觉反推 (and any future non-tool item placed on the left)
   }
 
   const container: Variants = {
@@ -66,8 +80,8 @@ export function RadialMenu() {
         style={{ marginLeft: 20 }}
         onClick={(e) => e.stopPropagation()}
       >
-        {ACTIONS.map((a, i) => {
-          const p = pos(i, ACTIONS.length);
+        {rightActions.map((a, i) => {
+          const p = pos(i, rightActions.length);
           return (
             <div key={a.id} className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: p.x, top: p.y }}>
               <motion.button
@@ -97,15 +111,15 @@ export function RadialMenu() {
         style={{ marginRight: 20 }}
         onClick={(e) => e.stopPropagation()}
       >
-        {TOOLS.map((t, i) => {
-          const p = pos(i, TOOLS.length);
+        {leftItems.map((t, i) => {
+          const p = pos(i, leftItems.length);
           return (
             <div key={t.id} className="absolute translate-x-1/2 -translate-y-1/2" style={{ right: p.x, top: p.y }}>
               <motion.button
                 variants={makeItem(-p.x, p.y)}
                 whileHover={reduce ? undefined : { scale: 1.06 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => onTool(t.id)}
+                onClick={() => onLeftItem(t.id)}
                 title={t.hint}
                 className={cn(pill, "flex-row-reverse pl-4 pr-2")}
               >

@@ -3,8 +3,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAction } from "@/lib/actions";
+import { MAX_REF_IMAGES } from "@/lib/limits";
 import { useStudio } from "@/lib/store";
-import { cn, fileToDownscaledDataURL } from "@/lib/utils";
+import { cn, fileToDataURL, fileToDownscaledDataURL, loadImage } from "@/lib/utils";
 import { Icon } from "./icons";
 import { ImageNode } from "./ImageNode";
 import { RadialMenu } from "./RadialMenu";
@@ -36,6 +37,7 @@ function Dropzone({ drag, busy, onPick }: { drag: boolean; busy: boolean; onPick
         <div className="text-center">
           <div className="text-lg font-medium text-fg">{busy ? "正在读取…" : "拖入或点击添加照片"}</div>
           <div className="mt-1.5 text-sm text-fg-mute">支持拖拽 · 点击选择 · 直接粘贴　|　人物 / 商品主图</div>
+          <div className="mt-1 text-xs text-fg-mute">可一次多张：第 1 张为主图，其余作参考</div>
         </div>
       </motion.button>
     </div>
@@ -45,6 +47,7 @@ function Dropzone({ drag, busy, onPick }: { drag: boolean; busy: boolean; onPick
 export function Stage() {
   const image = useStudio((s) => s.image);
   const setImage = useStudio((s) => s.setImage);
+  const addRefs = useStudio((s) => s.addRefs);
   const menuOpen = useStudio((s) => s.menuOpen);
   const closeMenu = useStudio((s) => s.closeMenu);
   const activeActionId = useStudio((s) => s.activeActionId);
@@ -70,46 +73,61 @@ export function Stage() {
       phase === "running" ||
       phase === "error" ||
       (phase === "success" && !!results?.length));
-  const refVisible = !!image && !!action?.needsRef;
+  // Free mode (no action chosen) also shows the ref slot — that's where
+  // multi-reference free-form generation lives (PLAN-MULTI-REF D1/D2) —
+  // except while a brush selection is active (inpaint owns the slot's spot).
+  const refVisible = !!image && (!!action?.needsRef || (!action && !inpaintMask));
 
-  const addFile = useCallback(
-    async (file: File | undefined | null) => {
-      if (!file) return;
-      if (file.type && !file.type.startsWith("image/")) {
-        showToast("error", "请选择图片文件");
-        return;
-      }
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const images = files.filter((f) => !f.type || f.type.startsWith("image/"));
+      if (images.length < files.length) showToast("error", "请选择图片文件");
+      if (!images.length) return;
       setBusy(true);
       try {
-        const { dataUrl, width, height } = await fileToDownscaledDataURL(file, 1800, 0.94);
-        setImage({ src: dataUrl, width, height });
+        // D5 (PLAN-MULTI-REF): dropping/selecting/pasting N images always
+        // resets — the 1st becomes the (full-resolution) main image, the rest
+        // become reference images. setImage must land before addRefs since
+        // setImage itself clears refImages (see store.ts).
+        const [first, ...rest] = images;
+        const dataUrl = await fileToDataURL(first);
+        const img = await loadImage(dataUrl);
+        setImage({ src: dataUrl, width: img.naturalWidth, height: img.naturalHeight });
+        if (rest.length) {
+          const capped = rest.slice(0, MAX_REF_IMAGES);
+          const refs = await Promise.all(
+            capped.map((f) => fileToDownscaledDataURL(f, 1400, 0.92).then((r) => r.dataUrl)),
+          );
+          addRefs(refs);
+        }
       } catch {
         showToast("error", "读取图片失败");
       } finally {
         setBusy(false);
       }
     },
-    [setImage, showToast],
+    [setImage, addRefs, showToast],
   );
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
+      const files: File[] = [];
       for (const it of Array.from(items)) {
         if (it.type.startsWith("image/")) {
           const f = it.getAsFile();
-          if (f) {
-            addFile(f);
-            e.preventDefault();
-            break;
-          }
+          if (f) files.push(f);
         }
+      }
+      if (files.length) {
+        addFiles(files);
+        e.preventDefault();
       }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addFile]);
+  }, [addFiles]);
 
   return (
     <div
@@ -124,7 +142,7 @@ export function Stage() {
       onDrop={(e) => {
         e.preventDefault();
         setDrag(false);
-        addFile(e.dataTransfer?.files?.[0]);
+        addFiles(Array.from(e.dataTransfer?.files || []));
       }}
       onClick={() => {
         if (menuOpen) closeMenu();
@@ -135,7 +153,17 @@ export function Stage() {
         className="pointer-events-none absolute inset-0"
         style={{ background: "radial-gradient(58% 52% at 50% 42%, rgba(230,178,119,0.06), transparent 70%)" }}
       />
-      <input ref={inputRef} type="file" accept="image/*" hidden onChange={(e) => addFile(e.target.files?.[0])} />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          addFiles(Array.from(e.target.files || []));
+          e.target.value = "";
+        }}
+      />
 
       {!image ? (
         <Dropzone drag={drag} busy={busy} onPick={() => inputRef.current?.click()} />

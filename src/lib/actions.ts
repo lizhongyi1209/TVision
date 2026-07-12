@@ -108,7 +108,7 @@ export const ACTIONS: StudioAction[] = [
     needsRef: false,
     refLabel: "",
     refHint: "",
-    defaultAspect: "1:1",
+    defaultAspect: "auto",
     defaultCount: 1,
     buildPrompt: () =>
       "Replace the background with a clean, pure white (#FFFFFF) seamless studio backdrop for an e-commerce hero image. Keep the main subject completely identical: same shape, color, materials, logo/label text, proportions and orientation. Center the subject with soft, even studio lighting and a subtle natural contact shadow beneath it. Crisp commercial product photography, sharp focus, high detail, professional e-commerce main image.",

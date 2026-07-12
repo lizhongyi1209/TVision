@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import type { GenParams, HistoryItem, InpaintJob, InpaintMask, ModelName, PublicSettings, Resolution } from "./types";
 import { getAction } from "./actions";
+import { MAX_REF_IMAGES } from "./limits";
 
 export interface PlacedImage {
   src: string;
@@ -11,6 +12,15 @@ export interface PlacedImage {
 }
 
 export type Phase = "idle" | "submitting" | "running" | "success" | "error";
+/** Top-level workspace switch (PLAN-BATCH D1/D2): "single" is the existing
+ *  one-image canvas studio (Stage/GenerateBar/ResultView, all state below);
+ *  "batch" is the batch workshop (BatchWorkshop/BatchBar, state lives in its
+ *  own store — src/lib/batchStore.ts, same reasoning as logStore.ts). Kept
+ *  here rather than in batchStore itself since it's a low-frequency toggle
+ *  that both Studio.tsx's top bar and the batch store's Studio-image-handoff
+ *  effect need to read, and putting it here avoids batchStore having to
+ *  import from Studio.tsx. */
+export type WorkMode = "single" | "batch";
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";
@@ -24,16 +34,26 @@ const DEFAULT_PARAMS: GenParams = {
   aspectRatio: "auto",
   billing: "特价",
   count: 1,
+  quality: "auto",
 };
 
 interface StudioState {
+  workMode: WorkMode;
+
   image: PlacedImage | null;
   menuOpen: boolean;
   cropOpen: boolean;
   brushPanelOpen: boolean;
 
   activeActionId: string | null;
-  refImage: string | null;
+  /** Multi-reference-image state (PLAN-MULTI-REF), one array shared by two
+   *  modes: a preset action with needsRef caps this at 1 (interaction copy
+   *  unchanged from the old single-ref flow — see RefSlot.tsx's PresetRefBox);
+   *  free mode (no action chosen) allows up to MAX_REF_IMAGES, each shown with
+   *  an index+2 badge ("图 2 / 图 3…") matching actions.ts's "the Nth image"
+   *  prompt-wording convention. Index 0 is always the first reference image
+   *  regardless of mode — the canvas/base image itself is never stored here. */
+  refImages: string[];
   /** Non-null once the user has painted and confirmed a local-repaint selection
    *  (BrushPanel). Mutually exclusive with activeActionId in practice: choosing
    *  an AI action or opening the brush panel each clear the other's state. */
@@ -86,6 +106,7 @@ interface StudioState {
   toast: ToastMsg | null;
 
   setImage: (img: PlacedImage | null) => void;
+  setWorkMode: (m: WorkMode) => void;
   openMenu: () => void;
   closeMenu: () => void;
   openCrop: () => void;
@@ -98,7 +119,16 @@ interface StudioState {
   replaceImage: (img: PlacedImage) => void;
   chooseAction: (id: string) => void;
   cancelAction: () => void;
-  setRef: (dataUrl: string | null) => void;
+  /** Append data URLs to refImages, capped at MAX_REF_IMAGES (silent slice —
+   *  callers that need to tell the user some were dropped, e.g. RefSlot.tsx/
+   *  Stage.tsx, must check the count themselves before calling this). */
+  addRefs: (dataUrls: string[]) => void;
+  /** No-op if index is out of range. */
+  removeRef: (index: number) => void;
+  /** No-op if index is out of range. */
+  replaceRef: (index: number, dataUrl: string) => void;
+  /** Swap with the neighbor in direction dir; no-op at either boundary. */
+  moveRef: (index: number, dir: -1 | 1) => void;
   updateParams: (p: Partial<GenParams>) => void;
   beginVisionAnalysis: () => void;
   setVisionProgress: (n: number) => void;
@@ -132,13 +162,15 @@ interface StudioState {
 let toastSeq = 1;
 
 export const useStudio = create<StudioState>((set) => ({
+  workMode: "single",
+
   image: null,
   menuOpen: false,
   cropOpen: false,
   brushPanelOpen: false,
 
   activeActionId: null,
-  refImage: null,
+  refImages: [],
   inpaintMask: null,
   inpaintJob: null,
   analyzingVision: false,
@@ -170,7 +202,7 @@ export const useStudio = create<StudioState>((set) => ({
       image: img,
       menuOpen: false,
       activeActionId: null,
-      refImage: null,
+      refImages: [],
       results: null,
       resultIndex: 0,
       resultsOpen: false,
@@ -185,6 +217,8 @@ export const useStudio = create<StudioState>((set) => ({
       params: { ...s.params, prompt: "", aspectRatio: "auto", count: 1 },
     })),
 
+  setWorkMode: (m) => set({ workMode: m }),
+
   openMenu: () => set((s) => (s.image ? { menuOpen: true } : {})),
   closeMenu: () => set({ menuOpen: false }),
 
@@ -193,7 +227,7 @@ export const useStudio = create<StudioState>((set) => ({
   // Brush tool and AI actions are mutually exclusive: opening the panel also
   // drops any chosen AI action/ref (mirrors chooseAction clearing inpaint below).
   openBrushPanel: () =>
-    set((s) => (s.image ? { brushPanelOpen: true, menuOpen: false, activeActionId: null, refImage: null } : {})),
+    set((s) => (s.image ? { brushPanelOpen: true, menuOpen: false, activeActionId: null, refImages: [] } : {})),
   closeBrushPanel: () => set({ brushPanelOpen: false }),
   setInpaintMask: (m) => set({ inpaintMask: m }),
   setInpaintJob: (j) => set({ inpaintJob: j }),
@@ -207,7 +241,12 @@ export const useStudio = create<StudioState>((set) => ({
     set((s) => ({
       activeActionId: id,
       menuOpen: false,
-      refImage: a.needsRef ? null : s.refImage,
+      // D4 (PLAN-MULTI-REF): any preset action selection clears free-mode refs
+      // outright, regardless of whether this action itself needsRef — this
+      // also closes the old hazard where a leftover refImage from a previous
+      // needsRef action could silently leak into an unrelated action's
+      // generation (e.g. 白底图), since the server only gates on textOnly.
+      refImages: [],
       inpaintMask: null,
       inpaintJob: null,
       params: {
@@ -238,7 +277,7 @@ export const useStudio = create<StudioState>((set) => ({
   cancelAction: () =>
     set({
       activeActionId: null,
-      refImage: null,
+      refImages: [],
       results: null,
       resultIndex: 0,
       resultsOpen: false,
@@ -252,7 +291,20 @@ export const useStudio = create<StudioState>((set) => ({
       inpaintJob: null,
     }),
 
-  setRef: (dataUrl) => set({ refImage: dataUrl }),
+  addRefs: (dataUrls) =>
+    set((s) => ({ refImages: [...s.refImages, ...dataUrls].slice(0, MAX_REF_IMAGES) })),
+  removeRef: (index) =>
+    set((s) => ({ refImages: s.refImages.filter((_, i) => i !== index) })),
+  replaceRef: (index, dataUrl) =>
+    set((s) => ({ refImages: s.refImages.map((r, i) => (i === index ? dataUrl : r)) })),
+  moveRef: (index, dir) =>
+    set((s) => {
+      const j = index + dir;
+      if (index < 0 || index >= s.refImages.length || j < 0 || j >= s.refImages.length) return {};
+      const next = [...s.refImages];
+      [next[index], next[j]] = [next[j], next[index]];
+      return { refImages: next };
+    }),
 
   updateParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
   beginVisionAnalysis: () => set({ analyzingVision: true, visionProgress: 0, visionStartedAt: Date.now(), visionError: null }),
@@ -288,7 +340,7 @@ export const useStudio = create<StudioState>((set) => ({
       resultsOpen: false,
       phase: "idle",
       activeActionId: null,
-      refImage: null,
+      refImages: [],
       menuOpen: false,
       inpaintMask: null,
       inpaintJob: null,

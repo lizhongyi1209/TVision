@@ -5,6 +5,7 @@
 // Server-only module (uses fetch + Buffer). Imported by route handlers.
 
 import type { RouteName } from "./types";
+import { GPT_IMAGE_2_SIZE_TABLE } from "./models.ts";
 
 export const NETWORK_ROUTES: Record<RouteName, string> = {
   全球加速: "https://api.o1key.cn",
@@ -21,6 +22,25 @@ const MODEL_ID_MAP: Record<string, string> = {
   "Nano Banana": "nano-banana",
 };
 const RESOLUTION_KEY_MAP: Record<string, string> = { "512": "0.5k", "1K": "1k", "2K": "2k", "4K": "4k" };
+
+// Official (官方) billing bypasses the nano-banana-* id scheme entirely and
+// calls the underlying Gemini model directly, regardless of resolution.
+const OFFICIAL_MODEL_ID_MAP: Record<string, string> = {
+  "Nano Banana Pro": "gemini-3-pro-image",
+  "Nano Banana 2": "gemini-3.1-flash-image",
+  "Nano Banana": "gemini-2.5-flash-image",
+};
+
+// GPT Image 2 uses a flat model id (不像 nano-banana-* 那样按分辨率拼档位后缀)
+// — 特价/官方两档直接对应两个不同 id，与分辨率无关。
+const GPT_IMAGE_2_MODEL_ID: Record<string, string> = {
+  特价: "gpt-image-2-c",
+  官方: "gpt-image-2",
+};
+
+export function isGptImage2(modelName: string): boolean {
+  return modelName === "GPT Image 2";
+}
 
 const SUCCESS = new Set(["success", "succeed", "succeeded", "completed", "done", "finished"]);
 const FAILURE = new Set([
@@ -40,26 +60,26 @@ export function resolveBaseUrl(route: RouteName): string {
  * A value that already looks like a raw id (nano-banana-*) passes through untouched.
  */
 export function buildModelId(modelName: string, resolution: string, billing: string): string {
+  if (isGptImage2(modelName)) {
+    return GPT_IMAGE_2_MODEL_ID[billing] ?? GPT_IMAGE_2_MODEL_ID["特价"];
+  }
+
+  const isOfficial = billing === "官方" || billing === "official";
+  if (isOfficial && modelName in OFFICIAL_MODEL_ID_MAP) {
+    return OFFICIAL_MODEL_ID_MAP[modelName];
+  }
+
   if (!(modelName in MODEL_ID_MAP) && modelName.toLowerCase().startsWith("nano-banana")) {
     return modelName;
   }
   const base = MODEL_ID_MAP[modelName] ?? "nano-banana-pro";
-  const isOfficial = billing === "官方" || billing === "official";
 
-  if (base === "nano-banana") {
-    if (isOfficial) throw new Error('模型 "Nano Banana" 仅支持特价计费');
-    return "nano-banana";
-  }
+  if (base === "nano-banana") return "nano-banana";
+
   const resKey = RESOLUTION_KEY_MAP[resolution] ?? "2k";
-
-  if (base === "nano-banana-pro" && resKey === "1k" && !isOfficial) return "nano-banana-pro";
-  if (base === "nano-banana-2" && resKey === "0.5k") {
-    if (isOfficial) throw new Error("Nano Banana 2 的 512 分辨率仅支持特价计费");
-    return "nano-banana-2-0.5k";
-  }
-  let id = `${base}-${resKey}`;
-  if (isOfficial) id += "-official";
-  return id;
+  if (base === "nano-banana-pro" && resKey === "1k") return "nano-banana-pro";
+  if (base === "nano-banana-2" && resKey === "0.5k") return "nano-banana-2-0.5k";
+  return `${base}-${resKey}`;
 }
 
 export interface SubmitBody {
@@ -88,6 +108,51 @@ export function buildSubmitBody(opts: {
   if (ar && ar !== "auto" && ar !== "智能" && ar !== "") body.aspect_ratio = ar;
   if (opts.images && opts.images.length) body.images = opts.images;
   if (opts.googleSearch) body.google_search = true;
+  return body;
+}
+
+// GPT Image 2 has a different body shape from the nano-banana family: no
+// aspect_ratio field (size carries the exact pixel dims or a bare tier
+// string), plus quality/n/output_format. Kept as a separate builder rather
+// than overloading buildSubmitBody, since the two APIs diverge enough that
+// a shared shape would need optional fields for params only one side uses.
+export interface GptImageSubmitBody {
+  model: string;
+  prompt: string;
+  size: string;
+  quality: "auto" | "high" | "medium" | "low";
+  n: number;
+  output_format: "png" | "jpeg" | "webp";
+  images?: string[];
+}
+
+/** size 解析：比例=auto 时直接发档位字符串；比例在预设表内时换算为精确宽高；
+ *  表外比例理论上不会到这里（GenerateBar 已禁选），兜底仍退回档位字符串。 */
+export function resolveGptImageSize(resolution: string, aspectRatio?: string): string {
+  const tier = resolution === "1K" || resolution === "2K" || resolution === "4K" ? resolution : "2K";
+  if (!aspectRatio || aspectRatio === "auto" || aspectRatio === "智能") return tier;
+  return GPT_IMAGE_2_SIZE_TABLE[tier]?.[aspectRatio] ?? tier;
+}
+
+export function buildGptImageSubmitBody(opts: {
+  modelId: string;
+  prompt: string;
+  resolution: string;
+  aspectRatio?: string;
+  images?: string[];
+  quality?: "auto" | "high" | "medium" | "low";
+  n?: number;
+  outputFormat?: "png" | "jpeg" | "webp";
+}): GptImageSubmitBody {
+  const body: GptImageSubmitBody = {
+    model: opts.modelId,
+    prompt: opts.prompt,
+    size: resolveGptImageSize(opts.resolution, opts.aspectRatio),
+    quality: opts.quality ?? "auto",
+    n: opts.n ?? 1,
+    output_format: opts.outputFormat ?? "png",
+  };
+  if (opts.images && opts.images.length) body.images = opts.images;
   return body;
 }
 
@@ -179,22 +244,27 @@ export interface ResultImage {
 export function extractResultImages(payload: unknown): ResultImage[] {
   const out: ResultImage[] = [];
   const seen = new Set<string>();
-  const addUrl = (v: unknown) => {
-    if (typeof v === "string" && v.startsWith("http") && !seen.has(v)) {
-      seen.add(v);
-      out.push({ kind: "url", value: v });
-    }
-  };
   const addB64 = (v: unknown) => {
     if (typeof v === "string" && v && !seen.has(v)) {
       seen.add(v);
       out.push({ kind: "b64", value: v });
     }
   };
+  // Some upstream fields named url/image_url etc. (e.g. gpt-image-2's
+  // data.images[].url) can hold either a real http(s) URL or an inline
+  // `data:image/...;base64,...` URI — route each to the right ResultImage kind.
+  const addUrl = (v: unknown) => {
+    if (typeof v !== "string" || seen.has(v)) return;
+    if (v.startsWith("http")) {
+      seen.add(v);
+      out.push({ kind: "url", value: v });
+    } else if (v.startsWith("data:image")) {
+      addB64(v.split(",", 2)[1]);
+    }
+  };
   const handleItem = (item: unknown) => {
     if (typeof item === "string") {
-      if (item.startsWith("http")) addUrl(item);
-      else if (item.startsWith("data:image")) addB64(item.split(",", 2)[1]);
+      addUrl(item);
       return;
     }
     if (!item || typeof item !== "object") return;
@@ -221,7 +291,11 @@ export function extractResultImages(payload: unknown): ResultImage[] {
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
 
-export async function submitTask(baseUrl: string, apiKey: string, body: SubmitBody): Promise<string> {
+export async function submitTask(
+  baseUrl: string,
+  apiKey: string,
+  body: SubmitBody | GptImageSubmitBody,
+): Promise<string> {
   const url = `${baseUrl}${SUBMIT_ENDPOINT}`;
   let res: Response;
   try {
