@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { fetchResultBytes, pollTaskOnce, resolveBaseUrl } from "@/lib/o1key";
 import type { JobStatusResponse } from "@/lib/types";
@@ -26,6 +27,8 @@ async function findExisting(nameNoExt: string): Promise<string | null> {
 // and return local media URLs. Idempotent: re-polling a saved job reuses files.
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const s = await readSettings();
 
   const fail = (error: string): JobStatusResponse => ({ id, status: "failed", progress: null, images: [], error });

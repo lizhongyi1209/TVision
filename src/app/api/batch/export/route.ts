@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { requireAuth } from "@/lib/auth";
 import { buildZip, type ZipEntry } from "@/lib/zip";
 
 export const runtime = "nodejs";
@@ -18,6 +19,7 @@ const MAX_FILES = 200;
 // (basename-sanitized against traversal, mirroring /api/media/[name]),
 // `name` is the desired name inside the archive ("服装名-模特N.png").
 export async function POST(req: Request) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const raw = Array.isArray(body.files) ? body.files : null;
   if (!raw || !raw.length) return NextResponse.json({ error: "缺少文件列表" }, { status: 400 });

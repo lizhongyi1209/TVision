@@ -6,6 +6,7 @@ import { useBatchStore } from "@/lib/batchStore";
 import { diag, useLogStore } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
 import { compositeInpaintResult, downscaleImageSrc, fakeProgressCurve } from "@/lib/utils";
+import { AgentPanel } from "./AgentPanel";
 import { BatchBar } from "./BatchBar";
 import { BatchLightbox } from "./BatchLightbox";
 import { BatchWorkshop } from "./BatchWorkshop";
@@ -21,6 +22,7 @@ import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Stage } from "./Stage";
 import { Toaster } from "./Toaster";
+import { UserChip } from "./UserChip";
 import { IconButton, Segmented } from "./ui";
 
 export default function Studio() {
@@ -347,6 +349,7 @@ export default function Studio() {
                     </span>
                   ),
                 },
+                { value: "agent", label: "Agent" },
               ]}
             />
           </div>
@@ -363,6 +366,7 @@ export default function Studio() {
             ) : null}
           </div>
           <IconButton name="Gear" label="设置" active={settingsOpen} onClick={onOpenSettings} />
+          <UserChip />
         </div>
       </header>
 
@@ -373,12 +377,14 @@ export default function Studio() {
             <GenerateBar />
             <ResultView />
           </>
-        ) : (
+        ) : workMode === "batch" ? (
           <>
             <BatchWorkshop />
             <BatchBar />
             <BatchLightbox />
           </>
+        ) : (
+          <AgentPanel />
         )}
       </main>
 

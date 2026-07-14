@@ -12,15 +12,16 @@ export interface PlacedImage {
 }
 
 export type Phase = "idle" | "submitting" | "running" | "success" | "error";
-/** Top-level workspace switch (PLAN-BATCH D1/D2): "single" is the existing
- *  one-image canvas studio (Stage/GenerateBar/ResultView, all state below);
- *  "batch" is the batch workshop (BatchWorkshop/BatchBar, state lives in its
- *  own store — src/lib/batchStore.ts, same reasoning as logStore.ts). Kept
- *  here rather than in batchStore itself since it's a low-frequency toggle
- *  that both Studio.tsx's top bar and the batch store's Studio-image-handoff
- *  effect need to read, and putting it here avoids batchStore having to
- *  import from Studio.tsx. */
-export type WorkMode = "single" | "batch";
+/** Top-level workspace switch (PLAN-BATCH D1/D2, PLAN-AGENT): "single" is the
+ *  existing one-image canvas studio (Stage/GenerateBar/ResultView, all state
+ *  below); "batch" is the batch workshop (BatchWorkshop/BatchBar, state lives
+ *  in its own store — src/lib/batchStore.ts, same reasoning as logStore.ts);
+ *  "agent" is the multimodal chat workspace (AgentPanel.tsx, state lives in
+ *  its own store — src/lib/agentChatStore.ts). Kept here rather than in each
+ *  mode's own store since it's a low-frequency toggle that both Studio.tsx's
+ *  top bar and the batch store's Studio-image-handoff effect need to read,
+ *  and putting it here avoids those stores having to import from Studio.tsx. */
+export type WorkMode = "single" | "batch" | "agent";
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";

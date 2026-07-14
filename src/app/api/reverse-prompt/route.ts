@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { MAX_BODY_BYTES, resolveBaseUrl } from "@/lib/o1key";
 import { normalizeVisionPrompt, resolveImageToDataUrl, reverseEngineerPrompt, VisionError } from "@/lib/vision";
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic";
 // is created here; that only happens once the user reviews the prompt and
 // clicks 生成 themselves.
 export async function POST(req: Request) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const s = await readSettings();
   if (!s.apiKey) {
     return NextResponse.json({ error: "未设置 API 令牌，请先在设置中填入 o1key 令牌" }, { status: 400 });

@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import type { HistoryItem } from "@/lib/types";
 import { jobIdForFile, readMetaMap } from "@/lib/historyMeta";
+import { requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 const OUTPUT_DIR = path.join(process.cwd(), "output");
 
 export async function GET() {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   try {
     const metaMap = await readMetaMap();
     const files = await fs.readdir(OUTPUT_DIR);
@@ -28,6 +30,7 @@ export async function GET() {
 }
 
 export async function DELETE(req: Request) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = (await req.json().catch(() => ({ name: null }))) as { name: string | null };
   if (!name) return NextResponse.json({ ok: false }, { status: 400 });
   try {

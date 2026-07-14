@@ -25,6 +25,17 @@ export type PublicSettings = Omit<Settings, "apiKey"> & {
   apiKeyMasked: string;
 };
 
+// new-api 账户额度是整数计数，$1 = 500000 单位；登录/UserChip 都按这个常量换算显示。
+export const QUOTA_PER_UNIT = 500000;
+
+/** Trimmed new-api 用户对象，登录/me 接口透传给前端的唯一形状（不含 role/group 等敏感字段）。 */
+export interface AuthUser {
+  id: number | string;
+  username: string;
+  display_name?: string;
+  quota?: number;
+}
+
 export type JobStatus = "running" | "success" | "failed";
 
 export interface JobStatusResponse {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import {
   buildGptImageSubmitBody,
@@ -19,6 +20,8 @@ export const dynamic = "force-dynamic";
 // Submit one or more generation tasks. Returns the upstream task ids as job ids;
 // the client polls GET /api/jobs/{id} for each.
 export async function POST(req: Request) {
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const s = await readSettings();
   if (!s.apiKey) {
     return NextResponse.json({ error: "未设置 API 令牌，请先在设置中填入 o1key 令牌" }, { status: 400 });

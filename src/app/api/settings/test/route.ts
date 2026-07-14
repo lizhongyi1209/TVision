@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { resolveBaseUrl, TASK_ENDPOINT } from "@/lib/o1key";
 
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 // token was accepted. We cannot fully validate a key without spending credits,
 // so the UI states that key validity is confirmed on the first real generation.
 export async function POST(req: Request) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const s = await readSettings();
 

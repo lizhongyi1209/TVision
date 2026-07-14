@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ const TYPES: Record<string, string> = {
 
 // Stream a generated image from /output. Path is basename-sanitized to prevent traversal.
 export async function GET(_req: Request, ctx: { params: Promise<{ name: string }> }) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
   const ext = path.extname(safe).toLowerCase();
@@ -45,6 +47,7 @@ async function findExisting(base: string): Promise<string | null> {
 
 // Replace an existing job's output with the frontend-composited full image after local inpaint, so history shows the complete result instead of the cropped patch.
 export async function PUT(req: Request, ctx: { params: Promise<{ name: string }> }) {
+  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
   if (!/^[\w.-]+\.png$/i.test(safe)) {

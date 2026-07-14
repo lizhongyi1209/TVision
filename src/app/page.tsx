@@ -1,5 +1,5 @@
-import Studio from "@/components/Studio";
+import { AuthGate } from "@/components/AuthGate";
 
 export default function Page() {
-  return <Studio />;
+  return <AuthGate />;
 }
