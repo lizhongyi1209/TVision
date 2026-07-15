@@ -64,10 +64,9 @@ export default function Studio() {
   // panelOpen lives in its own store (useLogStore) so high-frequency log
   // writes don't ripple into useStudio subscribers; these wrappers keep the
   // "only one panel open at a time" behavior in sync across both stores.
-  function onOpenSettings() {
-    closePanel();
-    openSettings();
-  }
+  // (The settings entry moved into UserChip's dropdown — see openTokenSettings
+  // there — so there is no header wrapper for it anymore; the first-load
+  // "missing token" nudge below still calls openSettings directly.)
   function onToggleHistory() {
     closePanel();
     toggleHistory();
@@ -365,7 +364,6 @@ export default function Studio() {
               <span className="pointer-events-none absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-400 ring-2 ring-ink" />
             ) : null}
           </div>
-          <IconButton name="Gear" label="设置" active={settingsOpen} onClick={onOpenSettings} />
           <UserChip />
         </div>
       </header>

@@ -8,7 +8,7 @@
 
 import { create } from "zustand";
 import { DEFAULT_AGENT_MODEL, DEFAULT_REASONING_LEVEL, type ReasoningLevel } from "./agentModels";
-import type { AgentChatMeta, AgentMessage } from "./agentTypes";
+import type { AgentAttachment, AgentChatMeta, AgentMessage } from "./agentTypes";
 
 let seq = 1;
 function nextId(): string {
@@ -26,6 +26,9 @@ interface AgentChatState {
   messages: AgentMessage[];
   model: string;
   effort: ReasoningLevel;
+  /** "联网搜索" toggle — when on, the server searches the web for the latest
+   *  question and feeds the results to the model (see route.ts). */
+  webSearch: boolean;
   streaming: boolean;
   loadingChats: boolean;
   error: string | null;
@@ -38,7 +41,14 @@ interface AgentChatState {
   deleteChat: (id: string) => Promise<void>;
   setModel: (model: string) => void;
   setEffort: (effort: ReasoningLevel) => void;
-  send: (text: string, images: string[]) => Promise<void>;
+  setWebSearch: (on: boolean) => void;
+  send: (text: string, images: string[], files?: AgentAttachment[]) => Promise<void>;
+  /** Edit-and-resend: drops the target user message and everything after it,
+   *  then sends `text` (reusing the original message's images and file
+   *  attachments) as a fresh turn — the follow-up persistChat in send()
+   *  full-replace-saves the truncated conversation, so no server-side
+   *  support is needed. */
+  resendFrom: (id: string, text: string) => Promise<void>;
   stop: () => void;
 }
 
@@ -61,6 +71,7 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
   messages: [],
   model: DEFAULT_AGENT_MODEL,
   effort: DEFAULT_REASONING_LEVEL,
+  webSearch: false,
   streaming: false,
   loadingChats: false,
   error: null,
@@ -105,16 +116,18 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
 
   setModel: (model) => set({ model }),
   setEffort: (effort) => set({ effort }),
+  setWebSearch: (on) => set({ webSearch: on }),
 
-  send: async (text, images) => {
+  send: async (text, images, files = []) => {
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && images.length === 0 && files.length === 0) return;
 
     const userMsg: AgentMessage = {
       id: nextId(),
       role: "user",
       content: trimmed,
       images: images.length ? images : undefined,
+      files: files.length ? files : undefined,
       createdAt: Date.now(),
     };
     // Placeholder shows up the instant send() runs — MessageRow renders an
@@ -127,17 +140,30 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
     const controller = new AbortController();
     set({ abortController: controller });
 
-    // Upstream OpenAI-style payload: multimodal content array when images are
-    // attached, plain string otherwise (matches vision.ts's shape).
-    const upstreamMessages = baseMessages.map((m) => ({
-      role: m.role,
-      content: m.images?.length
-        ? [
-            ...(m.content ? [{ type: "text", text: m.content }] : []),
-            ...m.images.map((url) => ({ type: "image_url", image_url: { url } })),
-          ]
-        : m.content,
-    }));
+    // Upstream OpenAI-style payload: multimodal content array when anything
+    // is attached, plain string otherwise. Attachment shapes were probed live
+    // against the gateway (see agentFiles.ts): pdf → `file` part, text-family
+    // → extra labelled text part, audio → `input_audio` part (Gemini only).
+    const upstreamMessages = baseMessages.map((m) => {
+      const msgFiles = m.files || [];
+      if (!m.images?.length && !msgFiles.length) return { role: m.role, content: m.content };
+      const parts: unknown[] = m.content ? [{ type: "text", text: m.content }] : [];
+      for (const f of msgFiles) {
+        if (f.kind === "pdf") {
+          parts.push({ type: "file", file: { filename: f.name, file_data: f.data } });
+        } else if (f.kind === "audio") {
+          const format = f.name.toLowerCase().endsWith(".mp3") ? "mp3" : "wav";
+          parts.push({
+            type: "input_audio",
+            input_audio: { data: f.data.slice(f.data.indexOf("base64,") + 7), format },
+          });
+        } else {
+          parts.push({ type: "text", text: `【附件 ${f.name}】\n${f.data}` });
+        }
+      }
+      for (const url of m.images || []) parts.push({ type: "image_url", image_url: { url } });
+      return { role: m.role, content: parts };
+    });
 
     // Aborts the turn if no chunk (reasoning or content) arrives for
     // STALL_TIMEOUT_MS — guards against the upstream connection hanging open
@@ -159,7 +185,12 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
       const res = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: get().model, effort: get().effort, messages: upstreamMessages }),
+        body: JSON.stringify({
+          model: get().model,
+          effort: get().effort,
+          webSearch: get().webSearch,
+          messages: upstreamMessages,
+        }),
         signal: controller.signal,
       });
 
@@ -194,6 +225,15 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
           }
           if (typeof json?.tv_error === "string") {
             upstreamErrorMsg = json.tv_error;
+            continue;
+          }
+          // First frame of a searched turn — attach the trace to the
+          // assistant message so the source list renders above the answer.
+          if (json?.tv_search) {
+            const search = json.tv_search as AgentMessage["search"];
+            set((s) => ({
+              messages: s.messages.map((m) => (m.id === assistantMsg.id ? { ...m, search } : m)),
+            }));
             continue;
           }
           const reasoningDelta = json.choices?.[0]?.delta?.reasoning_content;
@@ -232,12 +272,16 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
         abortController: null,
         // User-initiated stop keeps whatever streamed so far, as-is — not an
         // error. Anything else (upstream tv_error, mid-stream disconnect,
-        // stall timeout, request failure) surfaces as a red error line, but
-        // only replaces the turn when no content made it through; a partial
-        // answer is left standing rather than thrown away.
+        // stall timeout, request failure) attaches the error to the turn: a
+        // partial answer is left standing with a red "中断" line under it
+        // (previously the error was silently swallowed whenever any content
+        // had streamed — the answer just looked mysteriously cut off), and a
+        // turn with no content renders as the error line alone.
         messages: userStopped
           ? s.messages
-          : s.messages.map((m) => (m.id === assistantMsg.id && (timedOut || !m.content) ? { ...m, error: message } : m)),
+          : s.messages.map((m) =>
+              m.id === assistantMsg.id ? { ...m, error: m.content ? `回答中断：${message}` : message } : m,
+            ),
       }));
     }
 
@@ -246,6 +290,20 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
     const id = await persistChat({ currentChatId: get().currentChatId, messages: get().messages, model: get().model });
     if (id) set({ currentChatId: id });
     get().loadChats();
+  },
+
+  resendFrom: async (id, text) => {
+    const s = get();
+    if (s.streaming) return;
+    const idx = s.messages.findIndex((m) => m.id === id);
+    if (idx < 0 || s.messages[idx].role !== "user") return;
+    const images = s.messages[idx].images || [];
+    const files = s.messages[idx].files || [];
+    // send() would no-op on an empty turn — bail before truncating so the
+    // original message isn't silently dropped.
+    if (!text.trim() && images.length === 0 && files.length === 0) return;
+    set({ messages: s.messages.slice(0, idx) });
+    await get().send(text, images, files);
   },
 
   stop: () => {

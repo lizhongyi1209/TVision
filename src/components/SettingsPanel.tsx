@@ -3,7 +3,6 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { diag } from "@/lib/logStore";
-import { ROUTE_OPTIONS } from "@/lib/models";
 import { useStudio } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -70,34 +69,35 @@ export function SettingsPanel() {
     }
   }
 
+  // Centered modal, same shell as TopupModal (backdrop + glass card).
   return (
     <>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm"
         onClick={close}
       />
-      <motion.aside
-        initial={{ x: "100%" }}
-        animate={{ x: 0 }}
-        exit={{ x: "100%" }}
-        transition={{ type: "spring", stiffness: 320, damping: 34 }}
-        className="glass fixed inset-y-0 right-0 z-[101] flex w-[min(440px,100vw)] flex-col rounded-l-panel"
-      >
-        <div className="flex items-center justify-between border-b border-line px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <Icon name="Gear" size={18} className="text-accent" />
-            <span className="font-medium text-fg">设置</span>
+      <div className="fixed inset-0 z-[201] flex items-center justify-center p-4" onClick={close}>
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.96 }}
+          transition={{ duration: 0.18, ease: [0.32, 0.72, 0, 1] }}
+          onClick={(e) => e.stopPropagation()}
+          className="glass w-[400px] max-w-full rounded-panel p-6"
+        >
+          <div className="mb-5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <Icon name="Key" size={18} className="text-accent" />
+              <h2 className="text-base font-medium text-fg">令牌设置</h2>
+            </div>
+            <button type="button" onClick={close} aria-label="关闭" className="text-fg-mute hover:text-fg">
+              <Icon name="X" size={18} />
+            </button>
           </div>
-          <button onClick={close} className="text-fg-mute hover:text-fg" aria-label="关闭">
-            <Icon name="X" size={18} />
-          </button>
-        </div>
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
-          {/* API */}
           <section className="space-y-3">
             <Field
               label="API 令牌 (Bearer)"
@@ -111,12 +111,6 @@ export function SettingsPanel() {
                 className="h-10 w-full rounded-control border border-line bg-panel-2 px-3 text-sm text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none"
               />
             </Field>
-            <Field label="线路">
-              <div className="flex h-10 w-full items-center rounded-control border border-line bg-panel-2 px-3 text-sm text-fg-dim">
-                {ROUTE_OPTIONS[0].label}
-              </div>
-            </Field>
-
             <div className="flex items-center gap-3">
               <Button variant="ghost" onClick={test} disabled={testing}>
                 {testing ? <Icon name="CircleNotch" size={15} className="animate-spin" /> : <Icon name="Lightning" size={15} />}
@@ -131,19 +125,17 @@ export function SettingsPanel() {
             </div>
           </section>
 
-          <p className="text-xs leading-relaxed text-fg-mute">
+          <p className="mt-4 text-xs leading-relaxed text-fg-mute">
             令牌与图片仅保存在本机（<span className="font-mono">data/settings.json</span> 与{" "}
             <span className="font-mono">output/</span>），不会上传到除 o1key 之外的任何服务器。
           </p>
-        </div>
 
-        <div className="border-t border-line px-5 py-4">
-          <Button variant="primary" onClick={save} disabled={saving} className="w-full">
+          <Button variant="primary" onClick={save} disabled={saving} className="mt-5 w-full">
             {saving ? <Icon name="CircleNotch" size={16} className="animate-spin" /> : <Icon name="Check" size={16} weight="bold" />}
             保存设置
           </Button>
-        </div>
-      </motion.aside>
+        </motion.div>
+      </div>
     </>
   );
 }

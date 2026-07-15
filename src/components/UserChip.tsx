@@ -7,6 +7,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/authStore";
+import { useLogStore } from "@/lib/logStore";
+import { useStudio } from "@/lib/store";
 import { QUOTA_PER_UNIT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -15,7 +17,17 @@ import { TopupModal } from "./TopupModal";
 export function UserChip() {
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
+  const openSettings = useStudio((s) => s.openSettings);
+  const closeDiagPanel = useLogStore((s) => s.closePanel);
   const [open, setOpen] = useState(false);
+
+  // Mirrors Studio's mutually-exclusive panel behavior: opening token
+  // settings from the dropdown must also collapse the diagnostics panel
+  // (openSettings itself already closes the history panel).
+  function openTokenSettings() {
+    closeDiagPanel();
+    openSettings();
+  }
   // 弹窗开关跟下拉菜单的开关状态分开：关下拉不该顺手关掉正在充值的弹窗。
   const [topupOpen, setTopupOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -81,6 +93,17 @@ export function UserChip() {
             >
               <Icon name="Coins" size={15} />
               充值
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                openTokenSettings();
+              }}
+              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-white/[0.06] hover:text-fg"
+            >
+              <Icon name="Key" size={15} />
+              令牌设置
             </button>
             <a
               href="https://api.o1key.cn/console"

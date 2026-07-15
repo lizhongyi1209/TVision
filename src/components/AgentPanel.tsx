@@ -17,8 +17,24 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useAgentChat } from "@/lib/agentChatStore";
-import { AGENT_MODELS, REASONING_LEVELS, REASONING_LEVEL_LABELS, type ReasoningLevel } from "@/lib/agentModels";
-import type { AgentMessage } from "@/lib/agentTypes";
+import {
+  AGENT_FILE_ACCEPT,
+  classifyFile,
+  formatBytes,
+  MAX_AGENT_FILES,
+  MAX_AUDIO_BYTES,
+  MAX_FILE_BYTES,
+  MAX_TEXT_CHARS,
+} from "@/lib/agentFiles";
+import {
+  AGENT_MODELS,
+  modelSupportsAudio,
+  modelSupportsPdf,
+  REASONING_LEVELS,
+  REASONING_LEVEL_LABELS,
+  type ReasoningLevel,
+} from "@/lib/agentModels";
+import type { AgentAttachment, AgentMessage } from "@/lib/agentTypes";
 import { useStudio } from "@/lib/store";
 import { cn, downscaleImageSrc, fileToDataURL } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -209,16 +225,79 @@ function AgentMessages() {
   );
 }
 
+const FILE_KIND_ICONS: Record<AgentAttachment["kind"], string> = {
+  pdf: "FilePdf",
+  text: "FileText",
+  audio: "FileAudio",
+};
+
+/** Small pill showing one non-image attachment (used in the composer with a
+ *  remove button, and read-only inside sent user messages). */
+function FileChip({ file, onRemove }: { file: AgentAttachment; onRemove?: () => void }) {
+  return (
+    <div className="flex items-center gap-1.5 rounded-control border border-line bg-panel-2/60 py-1.5 pl-2.5 pr-2 text-xs text-fg-dim">
+      <Icon name={FILE_KIND_ICONS[file.kind]} size={14} className="shrink-0 text-accent" />
+      <span className="max-w-[180px] truncate" title={file.name}>
+        {file.name}
+      </span>
+      <span className="text-fg-mute">{formatBytes(file.size)}</span>
+      {onRemove ? (
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="移除文件"
+          className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-fg-mute transition-colors hover:bg-white/10 hover:text-fg"
+        >
+          <Icon name="X" size={10} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Message timestamp: same-day → "HH:mm", older → "M/D HH:mm". */
+function formatTime(ts: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
 function MessageRow({ message, streaming }: { message: AgentMessage; streaming: boolean }) {
   const isUser = message.role === "user";
   const isLast = useAgentChat((s) => s.messages[s.messages.length - 1]?.id === message.id);
+  const resendFrom = useAgentChat((s) => s.resendFrom);
+  const showToast = useStudio((s) => s.showToast);
+  // Edit-and-resend state (user messages only) — draft is (re)seeded from the
+  // message content each time editing opens.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   const hasReasoning = !!message.reasoning;
   const hasContent = !!message.content;
   const isActive = !isUser && streaming && isLast && !message.error;
   const showCursor = isActive && hasContent;
   const isPending = isActive && !hasContent && !hasReasoning;
 
-  if (message.error) {
+  async function copyContent() {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      showToast("success", "已复制");
+    } catch {
+      showToast("error", "复制失败");
+    }
+  }
+
+  function confirmResend() {
+    const next = draft.trim();
+    if (!next && !message.images?.length && !message.files?.length) return;
+    setEditing(false);
+    resendFrom(message.id, next);
+  }
+
+  // A turn that failed before any content arrived renders as the error line
+  // alone; a partial answer keeps its content and shows the error line below
+  // it (inside the assistant branch further down).
+  if (message.error && !hasContent) {
     return (
       <div className="flex items-start gap-2 text-sm text-red-400/80">
         <Icon name="Warning" size={15} className="mt-0.5 shrink-0" />
@@ -229,7 +308,14 @@ function MessageRow({ message, streaming }: { message: AgentMessage; streaming: 
 
   if (isUser) {
     return (
-      <div className="flex flex-col items-end gap-2">
+      <div className="group flex flex-col items-end gap-2">
+        {message.files?.length ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {message.files.map((f, i) => (
+              <FileChip key={i} file={f} />
+            ))}
+          </div>
+        ) : null}
         {message.images?.length ? (
           <div className="flex flex-wrap justify-end gap-2">
             {message.images.map((src, i) => (
@@ -238,21 +324,88 @@ function MessageRow({ message, streaming }: { message: AgentMessage; streaming: 
             ))}
           </div>
         ) : null}
-        {message.content ? (
-          <div className="glass max-w-[85%] rounded-panel px-4 py-2.5 text-sm leading-relaxed text-fg">
-            {message.content}
+        {editing ? (
+          <div className="w-full max-w-[85%] rounded-panel border border-accent/50 bg-panel-2/60 p-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  confirmResend();
+                } else if (e.key === "Escape") {
+                  setEditing(false);
+                }
+              }}
+              rows={Math.min(6, Math.max(2, draft.split("\n").length))}
+              autoFocus
+              className="w-full resize-none bg-transparent px-2 py-1 text-sm leading-relaxed text-fg focus:outline-none"
+            />
+            <div className="mt-1 flex items-center justify-end gap-2">
+              <span className="mr-auto pl-2 text-[11px] text-fg-mute">重发将丢弃这条消息之后的对话</span>
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                className="rounded-control px-2.5 py-1 text-xs text-fg-dim transition-colors hover:bg-white/5 hover:text-fg"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={confirmResend}
+                disabled={!draft.trim() && !message.images?.length && !message.files?.length}
+                className="flex items-center gap-1 rounded-control bg-accent px-2.5 py-1 text-xs font-medium text-ink transition-colors hover:bg-accent-2 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Icon name="PaperPlaneRight" size={12} weight="fill" />
+                重新发送
+              </button>
+            </div>
           </div>
-        ) : null}
+        ) : (
+          <>
+            {message.content ? (
+              <div className="glass max-w-[85%] whitespace-pre-wrap rounded-panel px-4 py-2.5 text-sm leading-relaxed text-fg">
+                {message.content}
+              </div>
+            ) : null}
+            <div className="flex items-center gap-1 text-fg-mute">
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(message.content);
+                  setEditing(true);
+                }}
+                disabled={streaming}
+                title="编辑并重新发送"
+                className="flex h-6 w-6 items-center justify-center rounded-full opacity-0 transition-opacity hover:bg-white/10 hover:text-fg group-hover:opacity-100 disabled:pointer-events-none"
+              >
+                <Icon name="PencilSimple" size={13} />
+              </button>
+              {message.content ? (
+                <button
+                  type="button"
+                  onClick={copyContent}
+                  title="复制内容"
+                  className="flex h-6 w-6 items-center justify-center rounded-full opacity-0 transition-opacity hover:bg-white/10 hover:text-fg group-hover:opacity-100"
+                >
+                  <Icon name="Copy" size={13} />
+                </button>
+              ) : null}
+              <span className="text-[11px]">{formatTime(message.createdAt)}</span>
+            </div>
+          </>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="flex items-start gap-2.5">
+    <div className="group flex items-start gap-2.5">
       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/5 text-accent">
         <Icon name="Sparkle" size={13} />
       </span>
       <div className="min-w-0 flex-1">
+        {message.search ? <SearchBlock search={message.search} /> : null}
         {isPending ? (
           <div className="flex h-6 items-center gap-2 text-sm text-accent/90">
             <Icon name="CircleNotch" size={14} className="animate-spin" />
@@ -266,7 +419,76 @@ function MessageRow({ message, streaming }: { message: AgentMessage; streaming: 
             {showCursor ? <span className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 animate-pulse bg-accent" /> : null}
           </div>
         ) : null}
+        {message.error ? (
+          <div className="mt-1.5 flex items-start gap-2 text-xs text-red-400/80">
+            <Icon name="Warning" size={13} className="mt-0.5 shrink-0" />
+            <span>⚠ {message.error}</span>
+          </div>
+        ) : null}
+        {hasContent && !isActive ? (
+          <div className="mt-1.5 flex items-center gap-1 text-fg-mute">
+            <span className="text-[11px]">{formatTime(message.createdAt)}</span>
+            <button
+              type="button"
+              onClick={copyContent}
+              title="复制内容"
+              className="flex h-6 w-6 items-center justify-center rounded-full opacity-0 transition-opacity hover:bg-white/10 hover:text-fg group-hover:opacity-100"
+            >
+              <Icon name="Copy" size={13} />
+            </button>
+          </div>
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+// Search trace for one assistant turn: what was searched and which sources
+// went to the model. Collapsed one-liner by default; expands to source links.
+function SearchBlock({ search }: { search: NonNullable<AgentMessage["search"]> }) {
+  const [open, setOpen] = useState(false);
+
+  if (search.error) {
+    return (
+      <div className="mb-2 flex items-center gap-1.5 text-xs text-amber-300/80">
+        <Icon name="Globe" size={12} className="shrink-0" />
+        <span>联网搜索失败（{search.error}），已在未联网状态下回答</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("mb-2", open && "rounded-control border border-line/60 bg-white/[0.02]")}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "flex w-full items-center gap-1.5 text-xs text-fg-mute transition-colors hover:text-fg-dim",
+          open ? "px-2.5 py-1.5" : "py-0.5",
+        )}
+      >
+        <Icon name={open ? "CaretDown" : "CaretRight"} size={11} className="shrink-0" />
+        <Icon name="Globe" size={12} className="shrink-0" />
+        <span className="truncate">
+          已联网搜索「{search.query}」 · {search.results.length} 条来源
+        </span>
+      </button>
+      {open ? (
+        <div className="space-y-1 px-2.5 pb-2">
+          {search.results.map((r, i) => (
+            <a
+              key={i}
+              href={r.url}
+              target="_blank"
+              rel="noreferrer"
+              title={r.url}
+              className="block truncate text-xs text-fg-mute transition-colors hover:text-accent"
+            >
+              [{i + 1}] {r.title}
+            </a>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -314,10 +536,14 @@ function AgentComposer() {
   const send = useAgentChat((s) => s.send);
   const stop = useAgentChat((s) => s.stop);
   const streaming = useAgentChat((s) => s.streaming);
+  const model = useAgentChat((s) => s.model);
+  const webSearch = useAgentChat((s) => s.webSearch);
+  const setWebSearch = useAgentChat((s) => s.setWebSearch);
   const showToast = useStudio((s) => s.showToast);
 
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
+  const [files, setFiles] = useState<AgentAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -332,61 +558,122 @@ function AgentComposer() {
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [text]);
 
-  const addImageFiles = useCallback(
-    async (files: File[]) => {
-      const imgFiles = files.filter((f) => f.type.startsWith("image/"));
-      if (files.length && !imgFiles.length) {
-        showToast("info", "暂只支持图片，文件分析后续版本支持");
-        return;
+  // Routes each dropped/picked file by kind (see agentFiles.ts for the probed
+  // upstream support behind each branch). Unsupported kinds toast and skip —
+  // one bad file doesn't block the rest of the batch.
+  const addFiles = useCallback(
+    async (list: File[]) => {
+      const room = MAX_AGENT_FILES - images.length - files.length;
+      if (list.length > room) {
+        showToast("info", `一条消息最多带 ${MAX_AGENT_FILES} 个附件`);
+        list = list.slice(0, Math.max(0, room));
       }
-      if (!imgFiles.length) return;
+      if (!list.length) return;
       setBusy(true);
+      const newImages: string[] = [];
+      const newFiles: AgentAttachment[] = [];
       try {
-        const downscaled = await Promise.all(
-          imgFiles.map(async (f) => {
+        for (const f of list) {
+          const kind = classifyFile(f.name, f.type);
+          if (kind === "image") {
             const dataUrl = await fileToDataURL(f);
-            return (await downscaleImageSrc(dataUrl, 1568, 0.92)).dataUrl;
-          }),
-        );
-        setImages((prev) => [...prev, ...downscaled]);
+            newImages.push((await downscaleImageSrc(dataUrl, 1568, 0.92)).dataUrl);
+          } else if (kind === "pdf") {
+            if (f.size > MAX_FILE_BYTES) {
+              showToast("error", `${f.name} 超过 50MB 上限`);
+              continue;
+            }
+            newFiles.push({ kind: "pdf", name: f.name, size: f.size, data: await fileToDataURL(f) });
+          } else if (kind === "text") {
+            let content = await f.text();
+            if (content.length > MAX_TEXT_CHARS) content = `${content.slice(0, MAX_TEXT_CHARS)}\n…（内容过长，已截断）`;
+            if (!content.trim()) {
+              showToast("info", `${f.name} 是空文件，已跳过`);
+              continue;
+            }
+            newFiles.push({ kind: "text", name: f.name, size: f.size, data: content });
+          } else if (kind === "office") {
+            if (f.size > MAX_FILE_BYTES) {
+              showToast("error", `${f.name} 超过 50MB 上限`);
+              continue;
+            }
+            const r = await fetch("/api/agent/extract", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: f.name, dataUrl: await fileToDataURL(f) }),
+            }).then((x) => x.json());
+            if (typeof r.text !== "string" || !r.text) {
+              showToast("error", r.error || `${f.name} 解析失败`);
+              continue;
+            }
+            if (r.truncated) showToast("info", `${f.name} 内容过长，已截断`);
+            newFiles.push({ kind: "text", name: f.name, size: f.size, data: r.text });
+          } else if (kind === "audio") {
+            if (f.size > MAX_AUDIO_BYTES) {
+              showToast("error", `${f.name} 超过 20MB 音频上限`);
+              continue;
+            }
+            newFiles.push({ kind: "audio", name: f.name, size: f.size, data: await fileToDataURL(f) });
+          } else if (kind === "legacy-office") {
+            showToast("info", `${f.name}：旧版 Office 格式暂不支持，请另存为 docx / xlsx 后再传`);
+          } else if (kind === "video") {
+            showToast("info", `${f.name}：音频仅支持 wav / mp3，视频后续版本支持`);
+          } else {
+            showToast("info", `${f.name}：暂不支持该文件类型`);
+          }
+        }
+        if (newImages.length) setImages((prev) => [...prev, ...newImages]);
+        if (newFiles.length) setFiles((prev) => [...prev, ...newFiles]);
       } catch {
-        showToast("error", "读取图片失败");
+        showToast("error", "读取文件失败");
       } finally {
         setBusy(false);
       }
     },
-    [showToast],
+    [images.length, files.length, showToast],
   );
 
   function onPaste(e: ReactClipboardEvent<HTMLTextAreaElement>) {
     const items = e.clipboardData?.items;
     if (!items) return;
-    const files: File[] = [];
+    const pasted: File[] = [];
     for (const it of Array.from(items)) {
-      if (it.type.startsWith("image/")) {
+      if (it.kind === "file") {
         const f = it.getAsFile();
-        if (f) files.push(f);
+        if (f) pasted.push(f);
       }
     }
-    if (files.length) {
+    if (pasted.length) {
       e.preventDefault();
-      addImageFiles(files);
+      addFiles(pasted);
     }
   }
 
   function onDrop(e: ReactDragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDrag(false);
-    addImageFiles(Array.from(e.dataTransfer?.files || []));
+    addFiles(Array.from(e.dataTransfer?.files || []));
   }
 
   async function submit() {
     if (streaming) return;
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && images.length === 0 && files.length === 0) return;
+    // Attachment × model gating (probed live — see agentModels.ts): block
+    // before sending so the attachments stay in the composer and the user
+    // can just switch model and hit send again.
+    if (files.some((f) => f.kind === "pdf") && !modelSupportsPdf(model)) {
+      showToast("info", "当前模型不支持 PDF，请切换到 Gemini 或 Claude 后再发送");
+      return;
+    }
+    if (files.some((f) => f.kind === "audio") && !modelSupportsAudio(model)) {
+      showToast("info", "音频分析目前仅 Gemini 支持，请切换模型后再发送");
+      return;
+    }
     setText("");
     setImages([]);
-    await send(trimmed, images);
+    setFiles([]);
+    await send(trimmed, images, files);
   }
 
   function onKeyDown(e: ReactKeyboardEvent<HTMLTextAreaElement>) {
@@ -399,6 +686,13 @@ function AgentComposer() {
   return (
     <div className="shrink-0 border-t border-line p-4">
       <div className="mx-auto max-w-[760px]">
+        {files.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {files.map((f, i) => (
+              <FileChip key={i} file={f} onRemove={() => setFiles((prev) => prev.filter((_, idx) => idx !== i))} />
+            ))}
+          </div>
+        ) : null}
         {images.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-2">
             {images.map((src, i) => (
@@ -433,11 +727,11 @@ function AgentComposer() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={AGENT_FILE_ACCEPT}
             multiple
             hidden
             onChange={(e) => {
-              addImageFiles(Array.from(e.target.files || []));
+              addFiles(Array.from(e.target.files || []));
               e.target.value = "";
             }}
           />
@@ -445,10 +739,23 @@ function AgentComposer() {
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
-            aria-label="添加图片"
+            aria-label="添加图片或文件"
+            title="图片 / PDF / Word / Excel / 文本代码 / 音频"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control text-fg-dim transition-colors hover:bg-white/5 hover:text-fg disabled:opacity-40"
           >
-            <Icon name={busy ? "CircleNotch" : "ImageSquare"} size={18} className={busy ? "animate-spin" : undefined} />
+            <Icon name={busy ? "CircleNotch" : "Paperclip"} size={18} className={busy ? "animate-spin" : undefined} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setWebSearch(!webSearch)}
+            aria-label="联网搜索"
+            title={webSearch ? "联网搜索：开（回答前会先搜索网页）" : "联网搜索：关"}
+            className={cn(
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-control transition-colors",
+              webSearch ? "bg-accent/15 text-accent" : "text-fg-dim hover:bg-white/5 hover:text-fg",
+            )}
+          >
+            <Icon name="Globe" size={18} weight={webSearch ? "fill" : "regular"} />
           </button>
 
           <textarea
@@ -458,7 +765,7 @@ function AgentComposer() {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             rows={1}
-            placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"
+            placeholder="输入消息，可附图片 / PDF / 文档 / 代码 / 音频…（Enter 发送，Shift+Enter 换行）"
             className="max-h-[136px] min-h-9 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-fg placeholder:text-fg-mute focus:outline-none"
           />
 
@@ -475,7 +782,7 @@ function AgentComposer() {
             <button
               type="button"
               onClick={submit}
-              disabled={!text.trim() && images.length === 0}
+              disabled={!text.trim() && images.length === 0 && files.length === 0}
               className="flex h-9 shrink-0 items-center gap-1.5 rounded-control bg-accent px-3 text-sm font-medium text-ink transition-colors hover:bg-accent-2 disabled:pointer-events-none disabled:opacity-40"
             >
               <Icon name="PaperPlaneRight" size={16} weight="fill" />

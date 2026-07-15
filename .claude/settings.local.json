@@ -199,7 +199,9 @@
       "Bash(echo READY)",
       "Bash(lsof -ti:3211)",
       "Bash(xargs -r kill -9)",
-      "Bash(lsof -i:3211)"
+      "Bash(lsof -i:3211)",
+      "Bash(grep -o '.\\\\{0,200\\\\}/pg/.\\\\{0,300\\\\}' 'claude-sync/sessions/cf8c0b97-09bd-45d1-958f-d6f2e0428651.jsonl')",
+      "Bash(npx next *)"
     ]
   }
 }

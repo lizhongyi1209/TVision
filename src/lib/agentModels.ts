@@ -23,21 +23,42 @@ export const REASONING_LEVEL_LABELS: Record<ReasoningLevel, string> = {
   high: "思考·高",
 };
 
+/** Which native-format endpoint family the model belongs to — used by the
+ *  web-search path, which must call each vendor's NATIVE endpoint because
+ *  the OpenAI-compat layer drops every search-tool shape (probed live, see
+ *  agentNativeSearch.server.ts). */
+export type AgentProvider = "openai" | "gemini" | "claude";
+
 export interface AgentModelInfo {
   /** Raw upstream model id, sent as-is in the chat-completions request body. */
   id: string;
   /** Friendly display name shown in the model dropdown. */
   label: string;
   reasoningStyle: ReasoningStyle;
+  provider: AgentProvider;
 }
 
 export const AGENT_MODELS: AgentModelInfo[] = [
-  { id: "claude-fable-5", label: "Claude Fable 5", reasoningStyle: "claude-thinking" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", reasoningStyle: "effort" },
-  { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", reasoningStyle: "effort" },
+  { id: "claude-fable-5", label: "Claude Fable 5", reasoningStyle: "claude-thinking", provider: "claude" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", reasoningStyle: "effort", provider: "openai" },
+  { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro", reasoningStyle: "effort", provider: "gemini" },
 ];
 
+export function agentProvider(id: string): AgentProvider | null {
+  return AGENT_MODELS.find((m) => m.id === id)?.provider ?? null;
+}
+
 export const DEFAULT_AGENT_MODEL = AGENT_MODELS[0].id;
+
+/** Attachment capabilities per model, probed live against the gateway
+ *  (scripts/test-file-support*.mjs): GPT-5.6 silently drops `file` parts
+ *  (and 400s on non-image data URLs), and only Gemini accepts `input_audio`. */
+export function modelSupportsPdf(id: string): boolean {
+  return id !== "gpt-5.6-sol";
+}
+export function modelSupportsAudio(id: string): boolean {
+  return id === "gemini-3.1-pro-preview";
+}
 
 export function isValidAgentModel(id: string): boolean {
   return AGENT_MODELS.some((m) => m.id === id);
