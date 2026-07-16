@@ -19,12 +19,17 @@ export type Phase = "idle" | "submitting" | "running" | "success" | "error";
  *  "agent" is the multimodal chat workspace (AgentPanel.tsx, state lives in
  *  its own store — src/lib/agentChatStore.ts); "templates" is the template
  *  library page (TemplateWorkshop.tsx, PLAN-TEMPLATE) — applying a template
- *  writes into this store's params and switches back to "single". Kept here
- *  rather than in each mode's own store since it's a low-frequency toggle
- *  that both Studio.tsx's top bar and the batch store's Studio-image-handoff
- *  effect need to read, and putting it here avoids those stores having to
- *  import from Studio.tsx. */
-export type WorkMode = "single" | "batch" | "agent" | "templates" | "video";
+ *  writes into this store's params and switches back to "single"; "video" is
+ *  the video workshop (VideoWorkshop.tsx, PLAN-VIDEO, state lives in
+ *  src/lib/videoStore.ts); "history" is the shared generation history page
+ *  (HistoryPage.tsx) — image and video results alike (was a slide-out rail
+ *  toggled independently of workMode; promoted to its own nav tab so it no
+ *  longer needs a mutual-exclusion dance with the settings/diagnostics
+ *  overlays). Kept here rather than in each mode's own store since it's a
+ *  low-frequency toggle that both Studio.tsx's top bar and the batch store's
+ *  Studio-image-handoff effect need to read, and putting it here avoids those
+ *  stores having to import from Studio.tsx. */
+export type WorkMode = "single" | "batch" | "agent" | "templates" | "video" | "history";
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";
@@ -48,6 +53,7 @@ interface StudioState {
   menuOpen: boolean;
   cropOpen: boolean;
   brushPanelOpen: boolean;
+  stickerOpen: boolean;
 
   activeActionId: string | null;
   /** Multi-reference-image state (PLAN-MULTI-REF), one array shared by two
@@ -105,7 +111,6 @@ interface StudioState {
 
   settings: PublicSettings | null;
   settingsOpen: boolean;
-  historyOpen: boolean;
   history: HistoryItem[];
   toast: ToastMsg | null;
 
@@ -117,6 +122,8 @@ interface StudioState {
   closeCrop: () => void;
   openBrushPanel: () => void;
   closeBrushPanel: () => void;
+  openSticker: () => void;
+  closeSticker: () => void;
   setInpaintMask: (m: InpaintMask) => void;
   setInpaintJob: (j: InpaintJob) => void;
   clearInpaint: () => void;
@@ -155,8 +162,6 @@ interface StudioState {
   setSettings: (s: PublicSettings | null) => void;
   openSettings: () => void;
   closeSettings: () => void;
-  toggleHistory: () => void;
-  closeHistory: () => void;
   setHistory: (h: HistoryItem[]) => void;
 
   showToast: (kind: ToastMsg["kind"], msg: string) => void;
@@ -172,6 +177,7 @@ export const useStudio = create<StudioState>((set) => ({
   menuOpen: false,
   cropOpen: false,
   brushPanelOpen: false,
+  stickerOpen: false,
 
   activeActionId: null,
   refImages: [],
@@ -197,7 +203,6 @@ export const useStudio = create<StudioState>((set) => ({
 
   settings: null,
   settingsOpen: false,
-  historyOpen: false,
   history: [],
   toast: null,
 
@@ -233,6 +238,8 @@ export const useStudio = create<StudioState>((set) => ({
   openBrushPanel: () =>
     set((s) => (s.image ? { brushPanelOpen: true, menuOpen: false, activeActionId: null, refImages: [] } : {})),
   closeBrushPanel: () => set({ brushPanelOpen: false }),
+  openSticker: () => set((s) => (s.image ? { stickerOpen: true, menuOpen: false } : {})),
+  closeSticker: () => set({ stickerOpen: false }),
   setInpaintMask: (m) => set({ inpaintMask: m }),
   setInpaintJob: (j) => set({ inpaintJob: j }),
   clearInpaint: () => set({ inpaintMask: null, inpaintJob: null }),
@@ -355,10 +362,8 @@ export const useStudio = create<StudioState>((set) => ({
   closeResults: () => set({ resultsOpen: false }),
 
   setSettings: (s) => set({ settings: s }),
-  openSettings: () => set({ settingsOpen: true, historyOpen: false }),
+  openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
-  toggleHistory: () => set((s) => ({ historyOpen: !s.historyOpen, settingsOpen: false })),
-  closeHistory: () => set({ historyOpen: false }),
   setHistory: (h) => set({ history: h }),
 
   showToast: (kind, msg) => set({ toast: { id: toastSeq++, kind, msg } }),

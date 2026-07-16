@@ -200,6 +200,46 @@ export async function cropImageToDataURL(
 }
 
 /**
+ * Composite an ordered list of sticker overlays onto a base image, at the
+ * base image's own natural resolution (display size is irrelevant — the
+ * caller only ever hands over percentage-based geometry). Each sticker's
+ * width is `wFrac` of the base's natural width, height keeps the sticker's
+ * own aspect ratio, and it's placed/rotated around its center (`cx`/`cy`,
+ * fractions of the base). Draw order follows array order, so later stickers
+ * land on top. Browser-only; not covered by unit tests for the same reason
+ * as cropImageToDataURL (canvas has no jsdom implementation).
+ */
+export async function compositeStickersToDataURL(
+  baseSrc: string,
+  stickers: { src: string; cx: number; cy: number; wFrac: number; rotation: number }[],
+): Promise<{ dataUrl: string; width: number; height: number }> {
+  const base = await loadImage(baseSrc);
+  const baseNatW = base.naturalWidth;
+  const baseNatH = base.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = baseNatW;
+  canvas.height = baseNatH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法创建画布上下文");
+  ctx.drawImage(base, 0, 0, baseNatW, baseNatH);
+
+  const images = await Promise.all(stickers.map((s) => loadImage(s.src)));
+  stickers.forEach((s, i) => {
+    const img = images[i];
+    const drawW = s.wFrac * baseNatW;
+    const drawH = drawW * (img.naturalHeight / img.naturalWidth);
+    ctx.save();
+    ctx.translate(s.cx * baseNatW, s.cy * baseNatH);
+    ctx.rotate(s.rotation);
+    ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+  });
+
+  const dataUrl = canvas.toDataURL("image/png");
+  return { dataUrl, width: baseNatW, height: baseNatH };
+}
+
+/**
  * Downscale + recompress an already full-resolution canvas src (data URL or
  * same-origin URL) to a JPEG data URL under a max dimension. Unlike
  * fileToDownscaledDataURL (which shrinks a freshly-picked File), this sits at

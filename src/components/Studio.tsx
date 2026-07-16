@@ -15,12 +15,13 @@ import { CropPanel } from "./CropPanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { GenerateBar } from "./GenerateBar";
 import { Grain } from "./Grain";
-import { HistoryRail } from "./HistoryRail";
+import { HistoryPage } from "./HistoryPage";
 import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Stage } from "./Stage";
+import { StickerPanel } from "./StickerPanel";
 import { TemplateWorkshop } from "./TemplateWorkshop";
 import { VideoWorkshop } from "./VideoWorkshop";
 import { Toaster } from "./Toaster";
@@ -34,20 +35,16 @@ export default function Studio() {
   const setImage = useStudio((s) => s.setImage);
   const updateParams = useStudio((s) => s.updateParams);
   const setSettings = useStudio((s) => s.setSettings);
-  const openSettings = useStudio((s) => s.openSettings);
   const cropOpen = useStudio((s) => s.cropOpen);
   const brushPanelOpen = useStudio((s) => s.brushPanelOpen);
-  const toggleHistory = useStudio((s) => s.toggleHistory);
+  const stickerOpen = useStudio((s) => s.stickerOpen);
   const closeSettings = useStudio((s) => s.closeSettings);
-  const closeHistory = useStudio((s) => s.closeHistory);
   const settingsOpen = useStudio((s) => s.settingsOpen);
-  const historyOpen = useStudio((s) => s.historyOpen);
   const showToast = useStudio((s) => s.showToast);
   const setHistory = useStudio((s) => s.setHistory);
 
   const panelOpen = useLogStore((s) => s.panelOpen);
   const togglePanel = useLogStore((s) => s.togglePanel);
-  const closePanel = useLogStore((s) => s.closePanel);
   const unreadErrors = useLogStore((s) => s.unreadErrors);
 
   const batchModels = useBatchStore((s) => s.models);
@@ -62,20 +59,13 @@ export default function Studio() {
   const setPhase = useStudio((s) => s.setPhase);
   const setError = useStudio((s) => s.setError);
 
-  // Diagnostics / settings / history are a mutually-exclusive panel group.
-  // panelOpen lives in its own store (useLogStore) so high-frequency log
-  // writes don't ripple into useStudio subscribers; these wrappers keep the
-  // "only one panel open at a time" behavior in sync across both stores.
+  // Diagnostics / settings are a mutually-exclusive overlay group (both can
+  // appear over any workMode tab, "历史生成" included — it's a regular nav
+  // tab now, not an overlay, so it no longer needs a wrapper here).
   // (The settings entry moved into UserChip's dropdown — see openTokenSettings
-  // there — so there is no header wrapper for it anymore; the first-load
-  // "missing token" nudge below still calls openSettings directly.)
-  function onToggleHistory() {
-    closePanel();
-    toggleHistory();
-  }
+  // there — so there is no header wrapper for it anymore.)
   function onToggleDiagnostics() {
     closeSettings();
-    closeHistory();
     togglePanel();
   }
 
@@ -88,7 +78,7 @@ export default function Studio() {
     }
   }, [setHistory]);
 
-  // First load: pull settings + history, nudge for a token if missing.
+  // First load: pull settings + history.
   useEffect(() => {
     (async () => {
       try {
@@ -100,10 +90,6 @@ export default function Studio() {
           billing: s.defaults.billing,
           aspectRatio: s.defaults.aspectRatio,
         });
-        if (!s.hasApiKey) {
-          openSettings();
-          showToast("info", "请先填入 o1key 令牌");
-        }
       } catch {
         // ignore
       }
@@ -353,6 +339,7 @@ export default function Studio() {
                 { value: "agent", label: "Agent" },
                 { value: "templates", label: "模板" },
                 { value: "video", label: "视频创作" },
+                { value: "history", label: "历史生成" },
               ]}
             />
           </div>
@@ -361,7 +348,6 @@ export default function Studio() {
           {workMode === "single" && image ? (
             <IconButton name="Plus" label="重新添加图片" onClick={() => setImage(null)} />
           ) : null}
-          <IconButton name="Stack" label="历史生成" active={historyOpen} onClick={onToggleHistory} />
           <div className="relative">
             <IconButton name="Pulse" label="诊断台" active={panelOpen} onClick={onToggleDiagnostics} />
             {unreadErrors > 0 ? (
@@ -389,6 +375,8 @@ export default function Studio() {
           <AgentPanel />
         ) : workMode === "video" ? (
           <VideoWorkshop />
+        ) : workMode === "history" ? (
+          <HistoryPage />
         ) : (
           <TemplateWorkshop />
         )}
@@ -396,8 +384,8 @@ export default function Studio() {
 
       <AnimatePresence>{cropOpen ? <CropPanel /> : null}</AnimatePresence>
       <AnimatePresence>{brushPanelOpen ? <BrushPanel /> : null}</AnimatePresence>
+      <AnimatePresence>{stickerOpen ? <StickerPanel /> : null}</AnimatePresence>
       <AnimatePresence>{settingsOpen ? <SettingsPanel /> : null}</AnimatePresence>
-      <AnimatePresence>{historyOpen ? <HistoryRail /> : null}</AnimatePresence>
       <AnimatePresence>{panelOpen ? <DiagnosticsPanel /> : null}</AnimatePresence>
       <Toaster />
     </div>

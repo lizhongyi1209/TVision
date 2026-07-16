@@ -50,8 +50,10 @@ export interface VideoState {
   /** 当前播放 blob URL（浏览器端缓存）*/
   blobUrl:        string | null;
 
-  // ── 历史 ─────────────────────────────────────────────────────────
-  history:        VideoHistoryItem[];
+  // ── 播放（从「历史生成」页回放）───────────────────────────────────────
+  // 历史记录本身不在这个 store 里维护（视频和图片共用 HistoryPage.tsx +
+  // /api/history，不再有独立的视频历史列表），这里只留 playHistory 把一条
+  // 历史记录塞回播放器状态。
 
   // ── Actions ───────────────────────────────────────────────────────
   setModel:        (m: KlingModel) => void;
@@ -76,7 +78,6 @@ export interface VideoState {
   setSuccess:      (videoUrl: string, blobUrl: string) => void;
   setError:        (msg: string) => void;
   resetTask:       () => void;
-  addHistory:      (item: VideoHistoryItem) => void;
   playHistory:     (item: VideoHistoryItem) => void;
 }
 
@@ -101,8 +102,6 @@ export const useVideoStore = create<VideoState>((set) => ({
   error:    null,
   videoUrl: null,
   blobUrl:  null,
-
-  history:  [],
 
   setModel:       (m) => set((s) => ({
     model: m,
@@ -142,6 +141,5 @@ export const useVideoStore = create<VideoState>((set) => ({
   setSuccess:   (videoUrl, blobUrl) => set({ phase: "success", videoUrl, blobUrl, progress: 100 }),
   setError:     (msg) => set({ phase: "error", error: msg }),
   resetTask:    () => set({ phase: "idle", progress: 0, taskId: null, error: null }),
-  addHistory:   (item) => set((s) => ({ history: [item, ...s.history].slice(0, 50) })),
   playHistory:  (item) => set({ phase: "success", videoUrl: item.videoUrl, blobUrl: item.blobUrl ?? null, progress: 100, taskId: item.taskId }),
 }));

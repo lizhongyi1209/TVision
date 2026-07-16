@@ -22,7 +22,6 @@ export function ResultSlot() {
   const setResultIndex = useStudio((s) => s.setResultIndex);
   const openResults = useStudio((s) => s.openResults);
   const closeSettings = useStudio((s) => s.closeSettings);
-  const closeHistory = useStudio((s) => s.closeHistory);
   const analyzingVision = useStudio((s) => s.analyzingVision);
   const visionProgress = useStudio((s) => s.visionProgress);
   const visionError = useStudio((s) => s.visionError);
@@ -37,9 +36,8 @@ export function ResultSlot() {
   if (!visionBusy && !visionFailed && !busy && !success && !failed) return null;
 
   function viewDiagnostics() {
-    // Diagnostics joins the same settings/history mutual-exclusion group.
+    // Diagnostics joins the same settings mutual-exclusion group.
     closeSettings();
-    closeHistory();
     openDiagnostics();
   }
 

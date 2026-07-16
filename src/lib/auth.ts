@@ -8,7 +8,12 @@
 import { cookies } from "next/headers";
 import type { AuthUser } from "./types";
 
-export const NEWAPI_BASE_URL = process.env.NEWAPI_BASE_URL || "https://api.o1key.cn";
+// 直接写死上游地址，不读环境变量：不同电脑/终端里各自残留的 NEWAPI_BASE_URL
+// 曾经指向过一个已经失效的旧域名（vip.o1key.com），一旦哪台机器的用户级环境
+// 变量还留着旧值，登录/2FA/充值/Agent 对话等所有走这个地址的请求就会全部
+// 502。写死后换新装一台电脑、换个终端窗口都不受影响，和 o1key.ts 里
+// NETWORK_ROUTES 的做法一致（那边的图片生成地址本来就是写死的，从没出过这个问题）。
+export const NEWAPI_BASE_URL = "https://api.o1key.cn";
 
 const AUTH_COOKIE = "tv_auth";
 const TWOFA_COOKIE = "tv_2fa";

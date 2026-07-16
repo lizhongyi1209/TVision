@@ -125,11 +125,6 @@ export function SettingsPanel() {
             </div>
           </section>
 
-          <p className="mt-4 text-xs leading-relaxed text-fg-mute">
-            令牌与图片仅保存在本机（<span className="font-mono">data/settings.json</span> 与{" "}
-            <span className="font-mono">output/</span>），不会上传到除 o1key 之外的任何服务器。
-          </p>
-
           <Button variant="primary" onClick={save} disabled={saving} className="mt-5 w-full">
             {saving ? <Icon name="CircleNotch" size={16} className="animate-spin" /> : <Icon name="Check" size={16} weight="bold" />}
             保存设置

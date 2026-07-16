@@ -2,8 +2,11 @@
 
 // 视频创作工作台（PLAN-VIDEO）：
 //  - 左栏：图片输入（v3/v2-6 首尾帧；v3-omni 默认多图参考，可切首尾帧）
-//  - 中/右：视频播放器 + 历史记录列表
+//  - 中/右：视频播放器
 //  - 底部：生成参数栏（VideoBar）
+// 生成记录不再在此页维护单独列表：视频生成成功后照图片的做法存进 output/
+// （见下方 /api/video/save 调用），统一在独立导航页「历史生成」
+// （HistoryPage.tsx）里查看/播放/删除，图片和视频共用一套列表。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
@@ -181,54 +184,6 @@ function VideoPlayer({ blobUrl, videoUrl, progress, phase }: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// History List
-// ─────────────────────────────────────────────────────────────────────────────
-
-function HistoryList() {
-  const history = useVideoStore((s) => s.history);
-  const playHistory = useVideoStore((s) => s.playHistory);
-
-  if (!history.length) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 py-8 text-fg-dim">
-        <Icon name="FilmSlate" size={22} />
-        <span className="text-xs text-fg-mute">生成后记录会出现在这里</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {history.map((item) => (
-        <motion.button
-          key={item.taskId}
-          type="button"
-          onClick={() => playHistory(item)}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="group flex items-center gap-3 rounded-control border border-line p-2.5 text-left transition-colors hover:border-line-2 hover:bg-white/[0.04]"
-        >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-accent">
-            <Icon name="Play" size={13} weight="fill" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-xs text-fg">
-              {item.prompt || (item.shots[0]?.prompt ?? "（分镜模式）")}
-            </div>
-            <div className="mt-0.5 text-[10px] text-fg-mute">
-              {item.model} · {item.mode} · {item.duration}s
-            </div>
-          </div>
-          <span className="shrink-0 text-[10px] text-fg-mute opacity-0 transition-opacity group-hover:opacity-100">
-            播放
-          </span>
-        </motion.button>
-      ))}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main VideoWorkshop
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -268,7 +223,6 @@ export function VideoWorkshop() {
   const setProgress   = useVideoStore((s) => s.setProgress);
   const setSuccess    = useVideoStore((s) => s.setSuccess);
   const setError      = useVideoStore((s) => s.setError);
-  const addHistory    = useVideoStore((s) => s.addHistory);
   const resetTask     = useVideoStore((s) => s.resetTask);
 
   // 轮询 effect
@@ -316,18 +270,7 @@ export function VideoWorkshop() {
             if (saved.localUrl) playUrl = saved.localUrl;
           } catch { /* 保存失败仍可播放远端直链 */ }
           setSuccess(res.videoUrl, playUrl);
-          addHistory({
-            taskId,
-            model,
-            mode,
-            duration,
-            prompt: shotsEnabled ? "" : prompt,
-            shots:  shotsEnabled ? shots : [],
-            videoUrl: res.videoUrl,
-            blobUrl: playUrl,
-            createdAt: Date.now(),
-          });
-          showToast("success", "视频生成完成，已保存到 output 目录");
+          showToast("success", "视频生成完成，已保存到 output 目录，可在「历史生成」中查看");
         } else if (res.status === "failed") {
           stopPoll();
           setError(res.error ?? "生成失败");
@@ -509,7 +452,7 @@ export function VideoWorkshop() {
           )}
         </div>
 
-        {/* 右栏：播放器 + 历史 */}
+        {/* 右栏：播放器 */}
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto min-w-0">
           <VideoPlayer
             blobUrl={blobUrl}
@@ -534,15 +477,6 @@ export function VideoWorkshop() {
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* 历史记录 */}
-          <div>
-            <div className="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-fg-mute">
-              <Icon name="FilmSlate" size={13} />
-              历史
-            </div>
-            <HistoryList />
-          </div>
         </div>
       </div>
 

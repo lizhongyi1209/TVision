@@ -27,6 +27,7 @@ function pos(i: number, n: number) {
 const TOOLS = [
   { id: "crop", label: "裁剪", hint: "裁剪画布图片（默认 1:1）", icon: "Crop" },
   { id: "brush", label: "局部重绘", hint: "涂抹要修改的区域，仅重绘该区域", icon: "PaintBrush" },
+  { id: "sticker", label: "贴图", hint: "叠加另一张图片，可移动/缩放/旋转", icon: "Sticker" },
 ];
 
 // Two fans around the clicked image: quick edit tools (+ 视觉反推) on the
@@ -35,6 +36,7 @@ export function RadialMenu() {
   const choose = useStudio((s) => s.chooseAction);
   const openCrop = useStudio((s) => s.openCrop);
   const openBrushPanel = useStudio((s) => s.openBrushPanel);
+  const openSticker = useStudio((s) => s.openSticker);
   const reduce = useReducedMotion();
 
   // 视觉反推 is pulled out of ACTIONS (right fan) and appended to the left
@@ -49,6 +51,7 @@ export function RadialMenu() {
   function onLeftItem(id: string) {
     if (id === "crop") openCrop();
     else if (id === "brush") openBrushPanel();
+    else if (id === "sticker") openSticker();
     else choose(id); // 视觉反推 (and any future non-tool item placed on the left)
   }
 

@@ -1,5 +1,5 @@
 // Server-side sidecar for generated videos: data/video-meta.json maps
-// taskId → VideoMeta, so HistoryRail can restore params when a video card
+// taskId → VideoMeta, so HistoryPage can restore params when a video card
 // is clicked. Mirrors the pattern in historyMeta.ts.
 
 import { promises as fs } from "fs";
