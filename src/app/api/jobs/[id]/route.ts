@@ -3,7 +3,10 @@ import { promises as fs } from "fs";
 import path from "path";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { readMetaMap } from "@/lib/historyMeta";
 import { fetchResultBytes, pollTaskOnce, resolveBaseUrl } from "@/lib/o1key";
+import { embedImageText, PNG_META_KEYWORD } from "@/lib/pngMeta";
+import { buildEmbeddedMeta } from "@/lib/templates";
 import type { JobStatusResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -40,6 +43,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
     if (poll.status === "success") {
       await fs.mkdir(OUTPUT_DIR, { recursive: true });
+      // Generation params for this job (history sidecar) — embedded into the
+      // image itself (PNG iTXt / JPEG COM, see pngMeta.ts) so the file
+      // carries its own recipe: dropping it back onto the canvas restores
+      // these settings without needing the sidecar. Best-effort: webp skips.
+      const genMeta = (await readMetaMap())[id];
       const saved: string[] = [];
       for (let i = 0; i < poll.images.length; i++) {
         const nameNoExt = `${id}${poll.images.length > 1 ? `_${i}` : ""}`;
@@ -49,7 +57,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
           continue;
         }
         try {
-          const { bytes, ext } = await fetchResultBytes(poll.images[i], s.apiKey);
+          const fetched = await fetchResultBytes(poll.images[i], s.apiKey);
+          const ext = fetched.ext;
+          let bytes = fetched.bytes;
+          if (genMeta) {
+            try {
+              bytes = Buffer.from(embedImageText(bytes, PNG_META_KEYWORD, JSON.stringify(buildEmbeddedMeta(genMeta))));
+            } catch {
+              // embedding must never block saving the image itself
+            }
+          }
           const fname = `${nameNoExt}${ext}`;
           await fs.writeFile(path.join(OUTPUT_DIR, fname), bytes);
           saved.push(`/api/media/${fname}`);

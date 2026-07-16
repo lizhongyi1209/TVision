@@ -17,11 +17,14 @@ export type Phase = "idle" | "submitting" | "running" | "success" | "error";
  *  below); "batch" is the batch workshop (BatchWorkshop/BatchBar, state lives
  *  in its own store — src/lib/batchStore.ts, same reasoning as logStore.ts);
  *  "agent" is the multimodal chat workspace (AgentPanel.tsx, state lives in
- *  its own store — src/lib/agentChatStore.ts). Kept here rather than in each
- *  mode's own store since it's a low-frequency toggle that both Studio.tsx's
- *  top bar and the batch store's Studio-image-handoff effect need to read,
- *  and putting it here avoids those stores having to import from Studio.tsx. */
-export type WorkMode = "single" | "batch" | "agent";
+ *  its own store — src/lib/agentChatStore.ts); "templates" is the template
+ *  library page (TemplateWorkshop.tsx, PLAN-TEMPLATE) — applying a template
+ *  writes into this store's params and switches back to "single". Kept here
+ *  rather than in each mode's own store since it's a low-frequency toggle
+ *  that both Studio.tsx's top bar and the batch store's Studio-image-handoff
+ *  effect need to read, and putting it here avoids those stores having to
+ *  import from Studio.tsx. */
+export type WorkMode = "single" | "batch" | "agent" | "templates" | "video";
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";

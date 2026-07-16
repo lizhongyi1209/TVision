@@ -230,6 +230,59 @@ export async function downscaleImageSrc(
 }
 
 /**
+ * Extract up to `maxFrames` evenly-spaced JPEG frames from a video for models
+ * without native video input (see agentModels.modelSupportsVideo — Gemini
+ * gets the raw video instead). Short clips get roughly one frame per second
+ * so a 3s video doesn't produce 8 near-identical frames. Throws when the
+ * browser can't decode the container (e.g. avi/wmv) — callers degrade to
+ * "Gemini only" for that attachment. Browser-only.
+ */
+export async function extractVideoFrames(
+  src: string,
+  maxFrames = 8,
+  maxDim = 768,
+  quality = 0.8,
+): Promise<string[]> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.src = src;
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error("视频解码失败"));
+  });
+  const duration = video.duration;
+  if (!Number.isFinite(duration) || duration <= 0) throw new Error("无法读取视频时长");
+  const count = Math.min(maxFrames, Math.max(2, Math.ceil(duration)));
+
+  const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+  const w = Math.max(1, Math.round(video.videoWidth * scale));
+  const h = Math.max(1, Math.round(video.videoHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("无法创建画布上下文");
+
+  const frames: string[] = [];
+  for (let i = 0; i < count; i++) {
+    // Mid-slot sampling; nudge off the exact end so the last seek resolves.
+    const t = Math.min(((i + 0.5) / count) * duration, Math.max(0, duration - 0.05));
+    await new Promise<void>((resolve, reject) => {
+      video.onseeked = () => resolve();
+      video.onerror = () => reject(new Error("视频解码失败"));
+      video.currentTime = t;
+    });
+    ctx.drawImage(video, 0, 0, w, h);
+    frames.push(canvas.toDataURL("image/jpeg", quality));
+  }
+  video.removeAttribute("src");
+  video.load();
+  return frames;
+}
+
+/**
  * Composite one local-repaint result block back onto the original image at its
  * bounding box: stretch the (arbitrary-size) result into the bbox, gate its
  * edges through the matching crop of the feathered alpha mask

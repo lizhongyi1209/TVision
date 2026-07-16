@@ -140,8 +140,11 @@ function toClaudeMessages(messages: ClientMessage[]): unknown[] {
         const d = splitDataUrl(p.image_url.url);
         if (d) blocks.push({ type: "image", source: { type: "base64", media_type: d.mime, data: d.data } });
       } else if (p.type === "file") {
+        // pdf only — video `file` parts are Gemini-gated in the client store
+        // and must never turn into a bogus application/pdf document here.
         const d = splitDataUrl(p.file.file_data);
-        if (d) blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: d.data } });
+        if (d && !d.mime.startsWith("video/"))
+          blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: d.data } });
       }
       // input_audio: Claude has no audio input — the composer gates this off.
     }

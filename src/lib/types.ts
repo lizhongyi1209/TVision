@@ -76,6 +76,21 @@ export interface HistoryItem {
   createdAt: number;
   size: number;
   meta?: GenMeta;
+  /** 视频任务元信息（视频历史条目专用，与 meta 互斥）。 */
+  videoMeta?: VideoMeta;
+}
+
+/** 视频生成任务的参数快照（写入 data/video-meta.json sidecar）。 */
+export interface VideoMeta {
+  taskId:   string;
+  model:    string;
+  mode:     string;
+  duration: number;
+  prompt:   string;
+  shots:    { index: number; prompt: string; duration: number }[];
+  sound:    boolean;
+  aspectRatio: string;
+  createdAt: number;
 }
 
 export interface GenParams {

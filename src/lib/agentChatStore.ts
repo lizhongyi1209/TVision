@@ -7,7 +7,7 @@
 // streaming text deltas would otherwise ripple into unrelated subscribers.
 
 import { create } from "zustand";
-import { DEFAULT_AGENT_MODEL, DEFAULT_REASONING_LEVEL, type ReasoningLevel } from "./agentModels";
+import { DEFAULT_AGENT_MODEL, DEFAULT_REASONING_LEVEL, modelSupportsVideo, type ReasoningLevel } from "./agentModels";
 import type { AgentAttachment, AgentChatMeta, AgentMessage } from "./agentTypes";
 
 let seq = 1;
@@ -143,7 +143,11 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
     // Upstream OpenAI-style payload: multimodal content array when anything
     // is attached, plain string otherwise. Attachment shapes were probed live
     // against the gateway (see agentFiles.ts): pdf → `file` part, text-family
-    // → extra labelled text part, audio → `input_audio` part (Gemini only).
+    // → extra labelled text part, audio → `input_audio` part (Gemini only),
+    // video → `file` part with the raw data URL on Gemini (reads it natively;
+    // scripts/test-video-support.mjs), extracted frames as image parts on
+    // everything else.
+    const videoNative = modelSupportsVideo(get().model);
     const upstreamMessages = baseMessages.map((m) => {
       const msgFiles = m.files || [];
       if (!m.images?.length && !msgFiles.length) return { role: m.role, content: m.content };
@@ -157,6 +161,23 @@ export const useAgentChat = create<AgentChatState>((set, get) => ({
             type: "input_audio",
             input_audio: { data: f.data.slice(f.data.indexOf("base64,") + 7), format },
           });
+        } else if (f.kind === "video") {
+          if (videoNative) {
+            parts.push({ type: "file", file: { filename: f.name, file_data: f.data } });
+          } else if (f.frames?.length) {
+            // Frame fallback — label the frames so the model knows they're
+            // ordered samples of one clip, not independent images.
+            parts.push({
+              type: "text",
+              text: `【视频 ${f.name}：以下 ${f.frames.length} 张图为按时间顺序均匀抽取的关键帧】`,
+            });
+            for (const frame of f.frames) parts.push({ type: "image_url", image_url: { url: frame } });
+          } else {
+            // History replayed to a non-Gemini model, and the browser never
+            // managed to extract frames — tell the model instead of silently
+            // dropping the attachment. (submit() blocks this for new sends.)
+            parts.push({ type: "text", text: `【视频 ${f.name}：当前模型无法读取该视频内容】` });
+          }
         } else {
           parts.push({ type: "text", text: `【附件 ${f.name}】\n${f.data}` });
         }

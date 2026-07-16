@@ -25,18 +25,21 @@ import {
   MAX_AUDIO_BYTES,
   MAX_FILE_BYTES,
   MAX_TEXT_CHARS,
+  MAX_VIDEO_BYTES,
+  videoMime,
 } from "@/lib/agentFiles";
 import {
   AGENT_MODELS,
   modelSupportsAudio,
   modelSupportsPdf,
+  modelSupportsVideo,
   REASONING_LEVELS,
   REASONING_LEVEL_LABELS,
   type ReasoningLevel,
 } from "@/lib/agentModels";
 import type { AgentAttachment, AgentMessage } from "@/lib/agentTypes";
 import { useStudio } from "@/lib/store";
-import { cn, downscaleImageSrc, fileToDataURL } from "@/lib/utils";
+import { cn, downscaleImageSrc, extractVideoFrames, fileToDataURL } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Select } from "./ui";
 
@@ -229,6 +232,7 @@ const FILE_KIND_ICONS: Record<AgentAttachment["kind"], string> = {
   pdf: "FilePdf",
   text: "FileText",
   audio: "FileAudio",
+  video: "FileVideo",
 };
 
 /** Small pill showing one non-image attachment (used in the composer with a
@@ -614,10 +618,30 @@ function AgentComposer() {
               continue;
             }
             newFiles.push({ kind: "audio", name: f.name, size: f.size, data: await fileToDataURL(f) });
+          } else if (kind === "video") {
+            if (f.size > MAX_VIDEO_BYTES) {
+              showToast("error", `${f.name} 超过 15MB 视频上限，请先压缩或剪辑`);
+              continue;
+            }
+            // Re-wrap the data URL with an accurate video MIME — FileReader
+            // yields application/octet-stream for exts the browser doesn't
+            // recognize (mov/mkv…), and the gateway routes on the MIME.
+            const raw = await fileToDataURL(f);
+            const dataUrl = `data:${videoMime(f.name, f.type)};base64,${raw.slice(raw.indexOf("base64,") + 7)}`;
+            // Frames feed the non-Gemini fallback. A container the browser
+            // can't decode (avi/wmv/…) just means no frames — the attachment
+            // still works on Gemini; submit() gates the rest.
+            let frames: string[] | undefined;
+            try {
+              frames = await extractVideoFrames(dataUrl);
+            } catch {
+              frames = undefined;
+            }
+            newFiles.push({ kind: "video", name: f.name, size: f.size, data: dataUrl, frames });
           } else if (kind === "legacy-office") {
             showToast("info", `${f.name}：旧版 Office 格式暂不支持，请另存为 docx / xlsx 后再传`);
-          } else if (kind === "video") {
-            showToast("info", `${f.name}：音频仅支持 wav / mp3，视频后续版本支持`);
+          } else if (kind === "unsupported-audio") {
+            showToast("info", `${f.name}：音频仅支持 wav / mp3`);
           } else {
             showToast("info", `${f.name}：暂不支持该文件类型`);
           }
@@ -668,6 +692,12 @@ function AgentComposer() {
     }
     if (files.some((f) => f.kind === "audio") && !modelSupportsAudio(model)) {
       showToast("info", "音频分析目前仅 Gemini 支持，请切换模型后再发送");
+      return;
+    }
+    // Non-Gemini models analyze video via extracted frames — a container the
+    // browser couldn't decode has none, so it can only go to Gemini.
+    if (files.some((f) => f.kind === "video" && !f.frames?.length) && !modelSupportsVideo(model)) {
+      showToast("info", "该视频格式无法抽帧，只有 Gemini 能直接分析，请切换模型后再发送");
       return;
     }
     setText("");
@@ -740,7 +770,7 @@ function AgentComposer() {
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
             aria-label="添加图片或文件"
-            title="图片 / PDF / Word / Excel / 文本代码 / 音频"
+            title="图片 / PDF / Word / Excel / 文本代码 / 音频 / 视频"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control text-fg-dim transition-colors hover:bg-white/5 hover:text-fg disabled:opacity-40"
           >
             <Icon name={busy ? "CircleNotch" : "Paperclip"} size={18} className={busy ? "animate-spin" : undefined} />
@@ -765,7 +795,7 @@ function AgentComposer() {
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             rows={1}
-            placeholder="输入消息，可附图片 / PDF / 文档 / 代码 / 音频…（Enter 发送，Shift+Enter 换行）"
+            placeholder="输入消息，可附图片 / PDF / 文档 / 代码 / 音频 / 视频…（Enter 发送，Shift+Enter 换行）"
             className="max-h-[136px] min-h-9 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-fg placeholder:text-fg-mute focus:outline-none"
           />
 

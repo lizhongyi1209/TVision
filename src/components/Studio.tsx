@@ -21,6 +21,8 @@ import { Logo } from "./Logo";
 import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Stage } from "./Stage";
+import { TemplateWorkshop } from "./TemplateWorkshop";
+import { VideoWorkshop } from "./VideoWorkshop";
 import { Toaster } from "./Toaster";
 import { UserChip } from "./UserChip";
 import { IconButton, Segmented } from "./ui";
@@ -349,6 +351,8 @@ export default function Studio() {
                   ),
                 },
                 { value: "agent", label: "Agent" },
+                { value: "templates", label: "模板" },
+                { value: "video", label: "视频创作" },
               ]}
             />
           </div>
@@ -381,8 +385,12 @@ export default function Studio() {
             <BatchBar />
             <BatchLightbox />
           </>
-        ) : (
+        ) : workMode === "agent" ? (
           <AgentPanel />
+        ) : workMode === "video" ? (
+          <VideoWorkshop />
+        ) : (
+          <TemplateWorkshop />
         )}
       </main>
 

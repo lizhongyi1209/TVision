@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import type { HistoryItem } from "@/lib/types";
 import { jobIdForFile, readMetaMap } from "@/lib/historyMeta";
+import { readVideoMetaMap, taskIdForVideoFile } from "@/lib/videoMeta";
 import { requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -13,14 +14,32 @@ const OUTPUT_DIR = path.join(process.cwd(), "output");
 export async function GET() {
   if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
   try {
-    const metaMap = await readMetaMap();
+    const [metaMap, videoMetaMap] = await Promise.all([readMetaMap(), readVideoMetaMap()]);
     const files = await fs.readdir(OUTPUT_DIR);
-    const imgs = files.filter((f) => /\.(png|jpe?g|webp)$/i.test(f));
+
     const items: HistoryItem[] = await Promise.all(
-      imgs.map(async (f) => {
-        const st = await fs.stat(path.join(OUTPUT_DIR, f));
-        return { name: f, url: `/api/media/${f}`, createdAt: st.mtimeMs, size: st.size, meta: metaMap[jobIdForFile(f)] };
-      }),
+      files
+        .filter((f) => /\.(png|jpe?g|webp|mp4)$/i.test(f))
+        .map(async (f) => {
+          const st = await fs.stat(path.join(OUTPUT_DIR, f));
+          if (/\.mp4$/i.test(f)) {
+            const taskId = taskIdForVideoFile(f);
+            return {
+              name: f,
+              url: `/api/media/${f}`,
+              createdAt: st.mtimeMs,
+              size: st.size,
+              videoMeta: videoMetaMap[taskId],
+            };
+          }
+          return {
+            name: f,
+            url: `/api/media/${f}`,
+            createdAt: st.mtimeMs,
+            size: st.size,
+            meta: metaMap[jobIdForFile(f)],
+          };
+        }),
     );
     items.sort((a, b) => b.createdAt - a.createdAt);
     return NextResponse.json({ items });

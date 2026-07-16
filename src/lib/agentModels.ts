@@ -59,6 +59,13 @@ export function modelSupportsPdf(id: string): boolean {
 export function modelSupportsAudio(id: string): boolean {
   return id === "gemini-3.1-pro-preview";
 }
+/** Only Gemini reads video natively (probed: scripts/test-video-support.mjs —
+ *  a `file` part with a data:video/* URL works on both the compat and native
+ *  endpoints). Other models get client-extracted frames, so they're not
+ *  gated — this only decides which payload shape the video becomes. */
+export function modelSupportsVideo(id: string): boolean {
+  return id === "gemini-3.1-pro-preview";
+}
 
 export function isValidAgentModel(id: string): boolean {
   return AGENT_MODELS.some((m) => m.id === id);

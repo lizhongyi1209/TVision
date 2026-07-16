@@ -4,6 +4,8 @@ import { motion } from "motion/react";
 import { useRef, useState } from "react";
 import { getAction, type StudioAction } from "@/lib/actions";
 import { MAX_REF_IMAGES } from "@/lib/limits";
+import { extractImageText, PNG_META_KEYWORD } from "@/lib/pngMeta";
+import { parseEmbeddedMeta } from "@/lib/templates";
 import { useStudio } from "@/lib/store";
 import { cn, fileToDownscaledDataURL } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -245,6 +247,23 @@ function FreeRefList({ compact }: { compact: boolean }) {
         accepted.map((f) => fileToDownscaledDataURL(f, 1400, 0.92).then((r) => r.dataUrl)),
       );
       addRefs(dataUrls);
+      // PLAN-TEMPLATE: a TVision-generated PNG dropped as a reference also
+      // restores the settings that produced it (first ref carrying metadata
+      // wins). Read from the ORIGINAL file bytes — the downscale above
+      // re-encodes and strips the chunk.
+      try {
+        for (const f of accepted) {
+          const meta = extractImageText(new Uint8Array(await f.arrayBuffer()), PNG_META_KEYWORD);
+          const params = meta ? parseEmbeddedMeta(meta) : null;
+          if (params) {
+            useStudio.getState().updateParams(params);
+            showToast("success", "检测到 TVision 生成信息，已还原当时的提示词与参数");
+            break;
+          }
+        }
+      } catch {
+        // best-effort restore; refs themselves already landed
+      }
     } catch {
       showToast("error", "读取失败");
     } finally {

@@ -143,10 +143,13 @@ export function BatchBar() {
     }
   }
 
+  // 初始状态（尚未上传任何图片）隐藏整个面板，上传第一张后再出现。
+  const hasAny = models.length > 0 || garments.length > 0;
+
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-4 pb-4">
       <AnimatePresence>
-        <motion.div
+        {hasAny ? <motion.div
           key="batchbar"
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
@@ -296,7 +299,7 @@ export function BatchBar() {
               ) : null}
             </>
           )}
-        </motion.div>
+        </motion.div> : null}
       </AnimatePresence>
     </div>
   );

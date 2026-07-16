@@ -6,14 +6,19 @@ export type AgentRole = "user" | "assistant" | "system";
 
 /** One non-image attachment on a user turn, stored inline in the chat file
  *  (same approach as images). `data` is what gets replayed upstream on every
- *  later turn: a data URL for pdf/audio (passed through as-is), or the
+ *  later turn: a data URL for pdf/audio/video (passed through as-is), or the
  *  extracted plain text for text/docx/xlsx files. */
 export interface AgentAttachment {
-  kind: "pdf" | "text" | "audio";
+  kind: "pdf" | "text" | "audio" | "video";
   name: string;
   /** Original file size in bytes (display only). */
   size: number;
   data: string;
+  /** Video only: JPEG-frame data URLs extracted client-side at attach time —
+   *  sent as image parts to models without native video input (Gemini gets
+   *  the raw video in `data` instead). Absent when the browser couldn't
+   *  decode the container; such videos are gated to Gemini in the composer. */
+  frames?: string[];
 }
 
 /** One chat turn. Images are data URLs (already downscaled client-side before

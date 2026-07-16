@@ -10,8 +10,13 @@
 //             .rtf is sent raw (models read RTF markup fine).
 //   - audio → OpenAI `input_audio` part (wav/mp3) — Gemini only; the `file`
 //             part shape 200s but the model never receives the audio.
-//   - video / legacy Office (doc/xls/ppt) → rejected with a hint; the gateway
-//     has no working path for them today.
+//   - video → Gemini reads it natively via the `file` part (data:video/*
+//             URL — probed live, scripts/test-video-support.mjs, same finding
+//             as the ComfyUI o1key plugin's universal_llm.py); other models
+//             get client-side extracted frames as image parts instead
+//             (AgentPanel extracts them at attach time).
+//   - legacy Office (doc/xls/ppt) → rejected with a hint; the gateway has no
+//     working path for them today.
 
 export type AgentFileKind =
   | "image"
@@ -20,6 +25,7 @@ export type AgentFileKind =
   | "office" // docx / xlsx / xlsm — needs server-side extraction first
   | "audio"
   | "video"
+  | "unsupported-audio" // m4a/flac/ogg/… — gateway only takes wav/mp3
   | "legacy-office" // doc / xls / ppt / pptx — no upstream path, reject with hint
   | "unsupported";
 
@@ -29,6 +35,9 @@ export const MAX_AGENT_FILES = 10;
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Audio goes inline in the JSON body — keep it tighter than pdf. */
 export const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+/** Video goes inline too, and base64 inflates it ×1.33 — 15MB keeps the
+ *  upstream request body under the gateway's ~20MB cap. */
+export const MAX_VIDEO_BYTES = 15 * 1024 * 1024;
 /** Cap on extracted/read text per file, in characters. */
 export const MAX_TEXT_CHARS = 200_000;
 
@@ -43,13 +52,28 @@ const TEXT_EXTS = new Set([
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "heic", "heif", "bmp", "avif"]);
 const AUDIO_EXTS = new Set(["wav", "mp3"]);
-const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "avi", "mkv", "flv", "mpeg", "mpg", "m4a", "flac", "ogg", "aac"]);
+const VIDEO_EXTS = new Set(["mp4", "mov", "webm", "avi", "mkv", "flv", "mpeg", "mpg", "wmv", "3gp"]);
+const UNSUPPORTED_AUDIO_EXTS = new Set(["m4a", "flac", "ogg", "aac"]);
 const OFFICE_EXTS = new Set(["docx", "xlsx", "xlsm"]);
 const LEGACY_OFFICE_EXTS = new Set(["doc", "xls", "ppt", "pptx"]);
+
+/** MIME sent upstream per video extension (mirrors the o1key ComfyUI
+ *  plugin's map) — the gateway routes on the data-URL MIME, so an accurate
+ *  one beats blanket video/mp4. */
+const VIDEO_MIMES: Record<string, string> = {
+  mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+  avi: "video/x-msvideo", mkv: "video/x-matroska", flv: "video/x-flv",
+  mpeg: "video/mpeg", mpg: "video/mpg", wmv: "video/x-ms-wmv", "3gp": "video/3gpp",
+};
 
 export function fileExt(name: string): string {
   const i = name.lastIndexOf(".");
   return i < 0 ? "" : name.slice(i + 1).toLowerCase();
+}
+
+export function videoMime(name: string, mime: string): string {
+  if (mime.startsWith("video/")) return mime;
+  return VIDEO_MIMES[fileExt(name)] || "video/mp4";
 }
 
 export function classifyFile(name: string, mime: string): AgentFileKind {
@@ -60,7 +84,8 @@ export function classifyFile(name: string, mime: string): AgentFileKind {
   if (OFFICE_EXTS.has(ext)) return "office";
   if (LEGACY_OFFICE_EXTS.has(ext)) return "legacy-office";
   if (AUDIO_EXTS.has(ext)) return "audio";
-  if (VIDEO_EXTS.has(ext) || mime.startsWith("video/") || mime.startsWith("audio/")) return "video";
+  if (VIDEO_EXTS.has(ext) || mime.startsWith("video/")) return "video";
+  if (UNSUPPORTED_AUDIO_EXTS.has(ext) || mime.startsWith("audio/")) return "unsupported-audio";
   if (TEXT_EXTS.has(ext) || mime.startsWith("text/")) return "text";
   return "unsupported";
 }
@@ -72,6 +97,7 @@ export const AGENT_FILE_ACCEPT = [
   ".pdf",
   ...[...OFFICE_EXTS].map((e) => `.${e}`),
   ...[...AUDIO_EXTS].map((e) => `.${e}`),
+  ...[...VIDEO_EXTS].map((e) => `.${e}`),
   ...[...TEXT_EXTS].map((e) => `.${e}`),
 ].join(",");
 
