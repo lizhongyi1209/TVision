@@ -14,6 +14,7 @@
 /scripts/probe.*
 
 # misc
+/tmp/
 *.log
 .DS_Store
 .env*

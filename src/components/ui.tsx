@@ -1,7 +1,8 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { Icon, type IconProps } from "./icons";
 
@@ -115,10 +116,12 @@ export function Select({
 }) {
   const [open, setOpen] = useState(false);
   const [openUp, setOpenUp] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
   const [active, setActive] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const id = useId();
+  const reduceMotion = useReducedMotion();
 
   const selectedIdx = options.findIndex((o) => o.value === value);
   const selected = options[selectedIdx];
@@ -126,11 +129,30 @@ export function Select({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !listRef.current?.contains(target)) setOpen(false);
     };
     window.addEventListener("pointerdown", onDown, true);
     return () => window.removeEventListener("pointerdown", onDown, true);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeForViewportChange = (e: Event) => {
+      if (e.type === "scroll" && listRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    };
+    window.addEventListener("resize", closeForViewportChange);
+    window.addEventListener("scroll", closeForViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", closeForViewportChange);
+      window.removeEventListener("scroll", closeForViewportChange, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   // Keep the active row visible while keyboard-navigating a scrolled menu.
   useEffect(() => {
@@ -141,8 +163,24 @@ export function Select({
   function openMenu() {
     if (disabled || !options.length) return;
     const r = rootRef.current?.getBoundingClientRect();
-    const est = Math.min(options.length * 40 + 12, 320); // rough menu height for the flip decision
-    setOpenUp(!!r && r.bottom + est + 8 > window.innerHeight && r.top > window.innerHeight - r.bottom);
+    if (!r) return;
+    const margin = 8;
+    const gap = 6;
+    const richRows = options.some((o) => o.hint || o.icon);
+    const estimatedHeight = Math.min(options.length * (richRows ? 52 : 40) + 12, 320);
+    const spaceBelow = Math.max(0, window.innerHeight - r.bottom - gap - margin);
+    const spaceAbove = Math.max(0, r.top - gap - margin);
+    const shouldOpenUp = estimatedHeight > spaceBelow && spaceAbove > spaceBelow;
+    const availableHeight = shouldOpenUp ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(48, Math.min(320, availableHeight));
+    const renderedHeight = Math.min(estimatedHeight, maxHeight);
+    const viewportWidth = Math.max(1, window.innerWidth - margin * 2);
+    const width = Math.min(viewportWidth, Math.max(r.width, richRows ? 280 : r.width));
+    const left = Math.max(margin, Math.min(r.left, window.innerWidth - width - margin));
+    const top = shouldOpenUp ? Math.max(margin, r.top - gap - renderedHeight) : r.bottom + gap;
+
+    setOpenUp(shouldOpenUp);
+    setMenuPosition({ left, top, width, maxHeight });
     setActive(selectedIdx >= 0 ? selectedIdx : options.findIndex((o) => !o.disabled));
     setOpen(true);
   }
@@ -178,91 +216,106 @@ export function Select({
     if (e.key === "Enter" || e.key === " ") return e.preventDefault(), commit(active);
   }
 
-  return (
-    <div ref={rootRef} className={cn("relative", className)}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => (open ? setOpen(false) : openMenu())}
-        onKeyDown={onKeyDown}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={open ? `${id}-listbox` : undefined}
-        className={cn(
-          "flex h-10 w-full cursor-pointer items-center gap-2 rounded-control border bg-panel-2 pl-3 pr-8 text-left text-sm text-fg transition-colors focus:outline-none",
-          open ? "border-accent" : "border-line hover:border-line-2 focus-visible:border-accent",
-          "disabled:cursor-not-allowed disabled:opacity-50",
-        )}
-      >
-        {selected?.icon ? <span className="flex shrink-0 items-center">{selected.icon}</span> : null}
-        <span className="truncate">{selected?.label ?? value}</span>
-      </button>
-      <Icon
-        name="CaretDown"
-        size={14}
-        className={cn(
-          "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-mute transition-transform duration-200",
-          open && "rotate-180 text-fg-dim",
-        )}
-      />
+  const menu =
+    typeof document !== "undefined"
+      ? createPortal(
+          <AnimatePresence>
+            {open && menuPosition ? (
+              <motion.ul
+                ref={listRef}
+                id={`${id}-listbox`}
+                role="listbox"
+                aria-activedescendant={active >= 0 ? `${id}-opt-${active}` : undefined}
+                initial={reduceMotion ? false : { opacity: 0, scale: 0.96, y: openUp ? 6 : -6 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97, y: openUp ? 4 : -4 }}
+                transition={{ duration: reduceMotion ? 0 : 0.16, ease: [0.32, 0.72, 0, 1] }}
+                style={{
+                  left: menuPosition.left,
+                  top: menuPosition.top,
+                  width: menuPosition.width,
+                  maxHeight: menuPosition.maxHeight,
+                  transformOrigin: openUp ? "bottom" : "top",
+                }}
+                className={cn(
+                  "fixed z-[80] overflow-y-auto overscroll-contain rounded-[14px] border border-line-2 bg-[#17171b]/[0.97] p-1.5 backdrop-blur-2xl",
+                  "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_50px_-12px_rgba(0,0,0,0.75)]",
+                )}
+              >
+                {options.map((o, i) => {
+                  const isSelected = o.value === value;
+                  return (
+                    <li
+                      key={o.value}
+                      id={`${id}-opt-${i}`}
+                      data-idx={i}
+                      role="option"
+                      aria-selected={isSelected}
+                      aria-disabled={o.disabled || undefined}
+                      onMouseEnter={() => !o.disabled && setActive(i)}
+                      onClick={() => commit(i)}
+                      className={cn(
+                        "flex select-none items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-sm transition-colors duration-100",
+                        o.disabled
+                          ? "cursor-not-allowed opacity-35"
+                          : cn("cursor-pointer", active === i ? "bg-white/[0.07] text-fg" : "text-fg-dim"),
+                      )}
+                    >
+                      {o.icon ? (
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.05] text-fg">
+                          {o.icon}
+                        </span>
+                      ) : null}
+                      <span className="min-w-0 flex-1">
+                        <span className={cn("block truncate leading-tight", isSelected && "font-medium text-fg")}>
+                          {o.label}
+                        </span>
+                        {o.hint ? (
+                          <span className="mt-0.5 block truncate text-[11px] leading-tight text-fg-mute">{o.hint}</span>
+                        ) : null}
+                      </span>
+                      {isSelected ? <Icon name="Check" size={14} weight="bold" className="shrink-0 text-accent" /> : null}
+                    </li>
+                  );
+                })}
+              </motion.ul>
+            ) : null}
+          </AnimatePresence>,
+          document.body,
+        )
+      : null;
 
-      <AnimatePresence>
-        {open ? (
-          <motion.ul
-            ref={listRef}
-            id={`${id}-listbox`}
-            role="listbox"
-            aria-activedescendant={active >= 0 ? `${id}-opt-${active}` : undefined}
-            initial={{ opacity: 0, scale: 0.96, y: openUp ? 6 : -6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: openUp ? 4 : -4 }}
-            transition={{ duration: 0.16, ease: [0.32, 0.72, 0, 1] }}
-            className={cn(
-              "absolute left-0 z-50 max-h-[320px] w-max min-w-full max-w-[300px] overflow-y-auto overscroll-contain rounded-[14px] border border-line-2 bg-[#17171b]/[0.97] p-1.5 backdrop-blur-2xl",
-              "shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_50px_-12px_rgba(0,0,0,0.75)]",
-              openUp ? "bottom-[calc(100%+6px)] origin-bottom" : "top-[calc(100%+6px)] origin-top",
-            )}
-          >
-            {options.map((o, i) => {
-              const isSelected = o.value === value;
-              return (
-                <li
-                  key={o.value}
-                  id={`${id}-opt-${i}`}
-                  data-idx={i}
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-disabled={o.disabled || undefined}
-                  onMouseEnter={() => !o.disabled && setActive(i)}
-                  onClick={() => commit(i)}
-                  className={cn(
-                    "flex select-none items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-sm transition-colors duration-100",
-                    o.disabled
-                      ? "cursor-not-allowed opacity-35"
-                      : cn("cursor-pointer", active === i ? "bg-white/[0.07] text-fg" : "text-fg-dim"),
-                  )}
-                >
-                  {o.icon ? (
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.05] text-fg">
-                      {o.icon}
-                    </span>
-                  ) : null}
-                  <span className="min-w-0 flex-1">
-                    <span className={cn("block truncate leading-tight", isSelected && "font-medium text-fg")}>
-                      {o.label}
-                    </span>
-                    {o.hint ? (
-                      <span className="mt-0.5 block truncate text-[11px] leading-tight text-fg-mute">{o.hint}</span>
-                    ) : null}
-                  </span>
-                  {isSelected ? <Icon name="Check" size={14} weight="bold" className="shrink-0 text-accent" /> : null}
-                </li>
-              );
-            })}
-          </motion.ul>
-        ) : null}
-      </AnimatePresence>
-    </div>
+  return (
+    <>
+      <div ref={rootRef} className={cn("relative", className)}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => (open ? setOpen(false) : openMenu())}
+          onKeyDown={onKeyDown}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? `${id}-listbox` : undefined}
+          className={cn(
+            "flex h-10 w-full cursor-pointer items-center gap-2 rounded-control border bg-panel-2 pl-3 pr-8 text-left text-sm text-fg transition-colors focus:outline-none",
+            open ? "border-accent" : "border-line hover:border-line-2 focus-visible:border-accent",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+        >
+          {selected?.icon ? <span className="flex shrink-0 items-center">{selected.icon}</span> : null}
+          <span className="truncate">{selected?.label ?? value}</span>
+        </button>
+        <Icon
+          name="CaretDown"
+          size={14}
+          className={cn(
+            "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-fg-mute transition-transform duration-200",
+            open && "rotate-180 text-fg-dim",
+          )}
+        />
+      </div>
+      {menu}
+    </>
   );
 }
 

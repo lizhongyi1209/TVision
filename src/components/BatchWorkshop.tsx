@@ -1,18 +1,18 @@
 "use client";
 
-import { motion } from "motion/react";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { batchNouns, type BatchNouns } from "@/lib/batchPrompts";
 import { type BatchCell, type BatchGarment, useBatchStore } from "@/lib/batchStore";
 import { MAX_BATCH_GARMENTS, MAX_BATCH_MODELS } from "@/lib/limits";
 import { useStudio } from "@/lib/store";
 import { cn, downloadUrl, fakeProgressCurve, fileToDownscaledDataURL, packGrid, stripExt } from "@/lib/utils";
+import { BatchSettingsPanel } from "./BatchBar";
 import { Icon } from "./icons";
 
-// 批量工坊主体（PLAN-BATCH T4）：模特栏 + 服装墙。1 位模特渲染网格视图（服装墙
-// 全部同屏、永不滚动 — D6 的 packGrid 自适应打包），≥2 位自动切全匹配矩阵
-// （行=服装、列=模特，超屏纵向滚动、行列头吸附）。生成引擎完全在 batchStore
-// 的模块级循环里，本组件只读状态 + 派发动作，卸载不影响运行中的批量。
+// 批量工坊主体：左侧持久参数，右侧在素材编排和结果矩阵之间切换。编排视图
+// 使用主图横向资产区和素材自适应墙；矩阵按素材行、主图列展示组合结果。
+// 生成引擎完全在 batchStore 的模块级循环里，本组件只读状态并派发动作。
 
 /** 把一张批量结果送回单图创作画布并切换模式（D9 反向接力）。BatchLightbox
  *  的「设为画布」也复用这里 — 与 ResultView.setAsCanvas 相同的先量尺寸再落
@@ -31,8 +31,8 @@ export function setBatchResultAsCanvas(resultUrl: string) {
 
 /** 批量结果的统一下载命名：换装类「服装名-模特N.png」，通用替换「素材名-主图N.png」
  *  —— 名词跟随当前类型（batchNouns）。 */
-export function downloadCellResult(resultUrl: string, garmentName: string, modelIndex: number) {
-  const n = batchNouns(useBatchStore.getState().wearTypeId);
+export function downloadCellResult(resultUrl: string, garmentName: string, modelIndex: number, wearTypeId?: string) {
+  const n = batchNouns(wearTypeId ?? useBatchStore.getState().wearTypeId);
   downloadUrl(resultUrl, `${garmentName}-${n.base}${modelIndex + 1}.png`);
 }
 
@@ -120,6 +120,8 @@ function CellStateLayer({
   return null;
 }
 
+type BatchView = "compose" | "results";
+
 export function BatchWorkshop() {
   const models = useBatchStore((s) => s.models);
   const garments = useBatchStore((s) => s.garments);
@@ -139,7 +141,18 @@ export function BatchWorkshop() {
 
   const locked = runState === "running";
   const [busy, setBusy] = useState(false);
+  const busyCountRef = useRef(0);
   const nouns = batchNouns(wearTypeId);
+  const resultNouns = batchNouns(cells[0]?.wearTypeId ?? wearTypeId);
+
+  const beginBusy = useCallback(() => {
+    busyCountRef.current += 1;
+    setBusy(true);
+  }, []);
+  const endBusy = useCallback(() => {
+    busyCountRef.current = Math.max(0, busyCountRef.current - 1);
+    if (busyCountRef.current === 0) setBusy(false);
+  }, []);
 
   const addModelInputRef = useRef<HTMLInputElement>(null);
   const replaceModelInputRef = useRef<HTMLInputElement>(null);
@@ -147,6 +160,7 @@ export function BatchWorkshop() {
   const replaceGarmentInputRef = useRef<HTMLInputElement>(null);
   const [replaceModelIndex, setReplaceModelIndex] = useState<number | null>(null);
   const [replaceGarmentIndex, setReplaceGarmentIndex] = useState<number | null>(null);
+  const [view, setView] = useState<BatchView>(() => (cells.length ? "results" : "compose"));
 
   // 500ms 共享 ticker：仅当有格子在运行时开着，唯一作用是触发重渲，让每个
   // running 格重算 displayPct — 进度本身不进 store（见 displayPct 注释）。
@@ -157,6 +171,11 @@ export function BatchWorkshop() {
     const id = setInterval(() => bumpTick((t) => t + 1), 500);
     return () => clearInterval(id);
   }, [hasRunning]);
+
+  useEffect(() => {
+    if (runState === "running") setView("results");
+    else if (runState === "idle" && cells.length === 0) setView("compose");
+  }, [runState, cells.length]);
 
   const guardLocked = useCallback(() => {
     if (!locked) return false;
@@ -170,18 +189,19 @@ export function BatchWorkshop() {
       const images = files.filter((f) => !f.type || f.type.startsWith("image/"));
       if (images.length < files.length) showToast("error", "请选择图片文件");
       if (!images.length) return;
-      setBusy(true);
+      beginBusy();
       try {
         // 模特走 1800/0.94 —— 与单图主图的提交降采样惯例一致（GenerateBar.tsx）。
         const srcs = await Promise.all(images.map((f) => fileToDownscaledDataURL(f, 1800, 0.94).then((r) => r.dataUrl)));
+        if (useBatchStore.getState().runState === "running") return;
         addModels(srcs);
       } catch {
         showToast("error", "读取图片失败");
       } finally {
-        setBusy(false);
+        endBusy();
       }
     },
-    [guardLocked, addModels, showToast],
+    [guardLocked, addModels, showToast, beginBusy, endBusy],
   );
 
   const addGarmentFiles = useCallback(
@@ -190,7 +210,7 @@ export function BatchWorkshop() {
       const images = files.filter((f) => !f.type || f.type.startsWith("image/"));
       if (images.length < files.length) showToast("error", "请选择图片文件");
       if (!images.length) return;
-      setBusy(true);
+      beginBusy();
       try {
         // 服装走 1400/0.92 —— 与参考图的降采样惯例一致（RefSlot.tsx）。
         const items = await Promise.all(
@@ -200,14 +220,15 @@ export function BatchWorkshop() {
             ),
           ),
         );
+        if (useBatchStore.getState().runState === "running") return;
         addGarments(items);
       } catch {
         showToast("error", "读取图片失败");
       } finally {
-        setBusy(false);
+        endBusy();
       }
     },
-    [guardLocked, addGarments, showToast, nouns.item],
+    [guardLocked, addGarments, showToast, nouns.item, beginBusy, endBusy],
   );
 
   async function handleReplaceModel(file: File | undefined | null) {
@@ -218,14 +239,15 @@ export function BatchWorkshop() {
       showToast("error", "请选择图片文件");
       return;
     }
-    setBusy(true);
+    beginBusy();
     try {
       const { dataUrl } = await fileToDownscaledDataURL(file, 1800, 0.94);
+      if (useBatchStore.getState().runState === "running") return;
       replaceModel(index, dataUrl);
     } catch {
       showToast("error", "读取图片失败");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -237,14 +259,15 @@ export function BatchWorkshop() {
       showToast("error", "请选择图片文件");
       return;
     }
-    setBusy(true);
+    beginBusy();
     try {
       const { dataUrl } = await fileToDownscaledDataURL(file, 1400, 0.92);
+      if (useBatchStore.getState().runState === "running") return;
       replaceGarment(index, { src: dataUrl, name: stripExt(file.name) || nouns.item });
     } catch {
       showToast("error", "读取图片失败");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -252,6 +275,7 @@ export function BatchWorkshop() {
   // PLAN-BATCH「现状事实」一节确认过的交接方式）。
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      if (useBatchStore.getState().lightbox) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       const files: File[] = [];
@@ -270,18 +294,14 @@ export function BatchWorkshop() {
     return () => window.removeEventListener("paste", onPaste);
   }, [addGarmentFiles]);
 
-  const cellOf = (mi: number, gi: number): BatchCell | undefined =>
-    cells.find((c) => c.modelIndex === mi && c.garmentIndex === gi);
-
-  const matrix = models.length >= 2;
+  const cellMap = useMemo(
+    () => new Map(cells.map((cell) => [`${cell.modelIndex}_${cell.garmentIndex}`, cell] as const)),
+    [cells],
+  );
+  const cellOf = (mi: number, gi: number): BatchCell | undefined => cellMap.get(`${mi}_${gi}`);
 
   return (
     <div className="relative flex-1 overflow-hidden">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{ background: "radial-gradient(58% 52% at 50% 42%, rgba(230,178,119,0.05), transparent 70%)" }}
-      />
       <input
         ref={addModelInputRef}
         type="file"
@@ -325,76 +345,136 @@ export function BatchWorkshop() {
         }}
       />
 
-      <div className="absolute inset-0 flex gap-4 px-6 pb-[224px] pt-5">
-        {matrix ? (
-          <MatrixView
-            models={models}
-            garments={garments}
-            locked={locked}
-            busy={busy}
-            nouns={nouns}
-            cellOf={cellOf}
-            onAddModel={() => !guardLocked() && addModelInputRef.current?.click()}
-            onReplaceModel={(i) => {
-              if (guardLocked()) return;
-              setReplaceModelIndex(i);
-              replaceModelInputRef.current?.click();
-            }}
-            onRemoveModel={(i) => !guardLocked() && removeModel(i)}
-            onAddGarment={() => !guardLocked() && addGarmentInputRef.current?.click()}
-            onReplaceGarment={(i) => {
-              if (guardLocked()) return;
-              setReplaceGarmentIndex(i);
-              replaceGarmentInputRef.current?.click();
-            }}
-            onRemoveGarment={(i) => !guardLocked() && removeGarment(i)}
-            onRetry={retryCell}
-            onOpen={openLightbox}
-          />
-        ) : (
-          <>
-            <ModelRail
-              model={models[0]}
-              locked={locked}
-              busy={busy}
-              nouns={nouns}
-              onDropFiles={(files) => void addModelFiles(files)}
-              onAdd={() => !guardLocked() && addModelInputRef.current?.click()}
-              onReplace={() => {
-                if (guardLocked()) return;
-                setReplaceModelIndex(0);
-                replaceModelInputRef.current?.click();
-              }}
-              onRemove={() => !guardLocked() && removeModel(0)}
-            />
-            <GarmentWall
-              garments={garments}
-              locked={locked}
-              busy={busy}
-              nouns={nouns}
-              cellOf={(gi) => cellOf(0, gi)}
-              onAdd={() => !guardLocked() && addGarmentInputRef.current?.click()}
-              onDropFiles={(files) => void addGarmentFiles(files)}
-              onReplace={(i) => {
-                if (guardLocked()) return;
-                setReplaceGarmentIndex(i);
-                replaceGarmentInputRef.current?.click();
-              }}
-              onRemove={(i) => !guardLocked() && removeGarment(i)}
-              onClear={() => !guardLocked() && clearGarments()}
-              onRetry={(gi) => retryCell(0, gi)}
-              onOpen={(gi) => openLightbox(0, gi)}
-            />
-          </>
-        )}
+      <div className="absolute inset-0 flex flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <BatchSettingsPanel busy={busy} />
+
+        <section className="flex min-h-[620px] min-w-0 flex-1 flex-col bg-ink lg:min-h-0">
+          <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3.5 lg:px-5">
+            <div>
+              <div className="text-base font-medium text-fg">{view === "compose" ? "素材编排" : "结果矩阵"}</div>
+              <div className="mt-0.5 text-xs text-fg-mute">
+                {view === "compose"
+                  ? `${nouns.base}与${nouns.item}分区管理，生成关系保持清晰`
+                  : `按${nouns.base}与${nouns.item}组合查看生成状态和结果`}
+              </div>
+            </div>
+
+            <div className="inline-flex gap-1 rounded-control border border-line bg-panel-2 p-1" role="group" aria-label="批量工坊视图">
+              <button
+                type="button"
+                aria-pressed={view === "compose"}
+                onClick={() => setView("compose")}
+                className={cn(
+                  "flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs transition-colors",
+                  view === "compose" ? "bg-accent font-medium text-ink" : "text-fg-dim hover:text-fg",
+                )}
+              >
+                <Icon name="ImageSquare" size={14} />
+                编排视图
+              </button>
+              <button
+                type="button"
+                aria-pressed={view === "results"}
+                onClick={() => setView("results")}
+                className={cn(
+                  "flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs transition-colors",
+                  view === "results" ? "bg-accent font-medium text-ink" : "text-fg-dim hover:text-fg",
+                )}
+              >
+                <Icon name="Stack" size={14} />
+                结果矩阵
+              </button>
+            </div>
+          </header>
+
+          <div id="batch-workshop-panel" className="flex min-h-0 flex-1 overflow-hidden p-4 lg:p-5">
+            {view === "compose" ? (
+              <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-4">
+                <BaseStrip
+                  models={models}
+                  locked={locked || busy}
+                  busy={busy}
+                  nouns={nouns}
+                  onDropFiles={(files) => void addModelFiles(files)}
+                  onAdd={() => !guardLocked() && addModelInputRef.current?.click()}
+                  onReplace={(i) => {
+                    if (guardLocked()) return;
+                    setReplaceModelIndex(i);
+                    replaceModelInputRef.current?.click();
+                  }}
+                  onRemove={(i) => !guardLocked() && removeModel(i)}
+                />
+                <div className="flex min-h-0 flex-1 border-t border-line pt-4">
+                  <GarmentWall
+                    garments={garments}
+                    locked={locked || busy}
+                    busy={busy}
+                    nouns={nouns}
+                    onAdd={() => !guardLocked() && addGarmentInputRef.current?.click()}
+                    onDropFiles={(files) => void addGarmentFiles(files)}
+                    onReplace={(i) => {
+                      if (guardLocked()) return;
+                      setReplaceGarmentIndex(i);
+                      replaceGarmentInputRef.current?.click();
+                    }}
+                    onRemove={(i) => !guardLocked() && removeGarment(i)}
+                    onClear={() => !guardLocked() && clearGarments()}
+                  />
+                </div>
+              </div>
+            ) : models.length > 0 && garments.length > 0 && cells.length > 0 ? (
+              <MatrixView
+                models={models}
+                garments={garments}
+                locked={locked || busy}
+                busy={busy}
+                nouns={resultNouns}
+                cellOf={cellOf}
+                onAddModel={() => !guardLocked() && addModelInputRef.current?.click()}
+                onReplaceModel={(i) => {
+                  if (guardLocked()) return;
+                  setReplaceModelIndex(i);
+                  replaceModelInputRef.current?.click();
+                }}
+                onRemoveModel={(i) => !guardLocked() && removeModel(i)}
+                onAddGarment={() => !guardLocked() && addGarmentInputRef.current?.click()}
+                onReplaceGarment={(i) => {
+                  if (guardLocked()) return;
+                  setReplaceGarmentIndex(i);
+                  replaceGarmentInputRef.current?.click();
+                }}
+                onRemoveGarment={(i) => !guardLocked() && removeGarment(i)}
+                onRetry={(mi, gi) => {
+                  if (!busy) retryCell(mi, gi);
+                }}
+                onOpen={(mi, gi) => {
+                  if (!busy) openLightbox(mi, gi);
+                }}
+              />
+            ) : (
+              <div className="flex h-full min-h-[360px] min-w-0 flex-1 flex-col items-center justify-center gap-3 rounded-control border border-dashed border-line-2 text-center">
+                <span className="flex h-11 w-11 items-center justify-center rounded-control border border-line bg-panel-2 text-fg-dim">
+                  <Icon name="Stack" size={20} />
+                </span>
+                <div>
+                  <div className="text-sm font-medium text-fg">暂无组合结果</div>
+                  <div className="mt-1 text-xs text-fg-mute">先在编排视图添加{nouns.base}和{nouns.item}</div>
+                </div>
+                <button type="button" onClick={() => setView("compose")} className="text-xs text-accent hover:text-accent-2">
+                  返回编排视图
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-// ── 网格视图 · 模特栏（1 位模特）────────────────────────────────────────────
-function ModelRail({
-  model,
+// ── 编排视图 · 主图横向资产区 ────────────────────────────────────────────────
+function BaseStrip({
+  models,
   locked,
   busy,
   nouns,
@@ -403,63 +483,96 @@ function ModelRail({
   onReplace,
   onRemove,
 }: {
-  model: string | undefined;
+  models: string[];
   locked: boolean;
   busy: boolean;
   nouns: BatchNouns;
   onDropFiles: (files: File[]) => void;
   onAdd: () => void;
-  onReplace: () => void;
-  onRemove: () => void;
+  onReplace: (index: number) => void;
+  onRemove: (index: number) => void;
 }) {
   const [drag, setDrag] = useState(false);
+  const canAdd = !locked && models.length < MAX_BATCH_MODELS;
+
   return (
-    <div className="flex w-[210px] shrink-0 flex-col gap-3">
-      <div className="text-xs font-medium tracking-wide text-fg-mute">{nouns.base}</div>
-
-      {model ? (
-        <div className="group relative w-fit max-w-full overflow-hidden rounded-panel border border-line bg-panel-2 shadow-[0_10px_34px_-12px_rgba(0,0,0,0.5)]">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={model} alt={`${nouns.base} 1`} className="block max-h-[46vh] max-w-full object-contain" />
-          <span className="absolute left-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-fg backdrop-blur-sm">
-            {nouns.base} 1
-          </span>
-          {locked ? null : (
-            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
-              <HoverBtn icon="ArrowClockwise" label="更换" onClick={onReplace} />
-              <HoverBtn icon="X" label="删除" onClick={onRemove} />
-            </div>
-          )}
+    <section
+      className="shrink-0"
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (locked) return;
+        setDrag(true);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDrag(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDrag(false);
+        if (locked) return;
+        onDropFiles(Array.from(e.dataTransfer?.files || []));
+      }}
+    >
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-fg">
+          {nouns.base} <span className="font-normal text-fg-mute">{models.length} / {MAX_BATCH_MODELS}</span>
         </div>
-      ) : null}
+        {canAdd && models.length ? (
+          <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-fg-dim transition-colors hover:text-fg">
+            <Icon name="Plus" size={13} />
+            添加{nouns.base}
+          </button>
+        ) : null}
+      </div>
 
-      {locked ? null : (
+      {models.length === 0 ? (
         <button
           type="button"
           onClick={onAdd}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDrag(true);
-          }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => {
-            // 模特栏与服装墙各收各的拖放（不互相冒泡）—— RefSlot 的挡冒泡惯例。
-            e.preventDefault();
-            e.stopPropagation();
-            setDrag(false);
-            onDropFiles(Array.from(e.dataTransfer?.files || []));
-          }}
+          disabled={!canAdd}
           className={cn(
-            "flex flex-col items-center justify-center gap-1.5 rounded-panel border border-dashed py-6 transition-all duration-300",
+            "flex h-[150px] w-full flex-col items-center justify-center gap-2 rounded-control border border-dashed transition-all duration-300",
             drag ? "border-accent bg-accent/5" : "border-line-2 hover:border-fg-mute hover:bg-white/[0.02]",
           )}
         >
-          <Icon name={busy ? "CircleNotch" : "Plus"} size={16} className={busy ? "animate-spin text-accent" : "text-fg-dim"} />
-          <span className="text-xs text-fg-mute">{model ? `添加${nouns.base}` : `添加${nouns.base}（点击或拖入）`}</span>
-          {model ? <span className="text-[10px] text-fg-mute">{`加第 2 ${nouns.baseUnit}即变全匹配`}</span> : null}
+          <Icon name={busy ? "CircleNotch" : "ImageSquare"} size={22} className={busy ? "animate-spin text-accent" : "text-fg-dim"} />
+          <span className="text-sm font-medium text-fg">添加{nouns.base}</span>
+          <span className="text-xs text-fg-mute">点击选择或拖入图片</span>
         </button>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-1">
+          {models.map((model, index) => (
+            <div key={index} className="group relative w-[132px] shrink-0 overflow-hidden rounded-control border border-line bg-panel-2/60">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={model} alt={`${nouns.base} ${index + 1}`} className="block h-[136px] w-full object-contain" />
+              <div className="border-t border-line px-2.5 py-2 text-xs">
+                <span className="truncate text-fg">{nouns.base} {String(index + 1).padStart(2, "0")}</span>
+              </div>
+              {locked ? null : (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:inset-auto [@media(hover:none)]:right-1 [@media(hover:none)]:top-1 [@media(hover:none)]:rounded-full [@media(hover:none)]:bg-transparent [@media(hover:none)]:opacity-100 [@media(hover:none)]:backdrop-blur-none">
+                  <HoverBtn icon="ArrowClockwise" label="更换" onClick={() => onReplace(index)} />
+                  <HoverBtn icon="X" label="删除" onClick={() => onRemove(index)} />
+                </div>
+              )}
+            </div>
+          ))}
+          {canAdd ? (
+            <button
+              type="button"
+              onClick={onAdd}
+              className={cn(
+                "flex min-h-[176px] w-[132px] shrink-0 flex-col items-center justify-center gap-2 rounded-control border border-dashed text-fg-mute transition-colors",
+                drag ? "border-accent bg-accent/5 text-accent" : "border-line-2 hover:border-fg-mute hover:text-fg",
+              )}
+            >
+              <Icon name={busy ? "CircleNotch" : "Plus"} size={18} className={busy ? "animate-spin" : undefined} />
+              <span className="text-xs">添加{nouns.base}</span>
+            </button>
+          ) : null}
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -469,27 +582,21 @@ function GarmentWall({
   locked,
   busy,
   nouns,
-  cellOf,
   onAdd,
   onDropFiles,
   onReplace,
   onRemove,
   onClear,
-  onRetry,
-  onOpen,
 }: {
   garments: BatchGarment[];
   locked: boolean;
   busy: boolean;
   nouns: BatchNouns;
-  cellOf: (gi: number) => BatchCell | undefined;
   onAdd: () => void;
   onDropFiles: (files: File[]) => void;
   onReplace: (gi: number) => void;
   onRemove: (gi: number) => void;
   onClear: () => void;
-  onRetry: (gi: number) => void;
-  onOpen: (gi: number) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -518,6 +625,7 @@ function GarmentWall({
       className="flex min-w-0 flex-1 flex-col gap-2"
       onDragOver={(e) => {
         e.preventDefault();
+        if (locked || busy) return;
         setDrag(true);
       }}
       onDragLeave={(e) => {
@@ -527,25 +635,27 @@ function GarmentWall({
         e.preventDefault();
         e.stopPropagation();
         setDrag(false);
+        if (locked || busy) return;
         onDropFiles(Array.from(e.dataTransfer?.files || []));
       }}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="text-xs font-medium tracking-wide text-fg-mute">
-          {nouns.item}
-          {garments.length ? ` · ${garments.length} ${nouns.itemUnit}` : ""}
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium text-fg">
+          {nouns.item} <span className="font-normal text-fg-mute">{garments.length} / {MAX_BATCH_GARMENTS}</span>
         </div>
         {locked || !garments.length ? null : (
-          <>
-            <button type="button" onClick={onAdd} className="text-xs text-fg-dim transition-colors hover:text-fg">
-              ＋添加
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={onAdd} className="flex items-center gap-1 text-xs text-fg-dim transition-colors hover:text-fg">
+              <Icon name="Plus" size={13} />
+              批量添加
             </button>
-            <button type="button" onClick={onClear} className="text-xs text-fg-mute transition-colors hover:text-fg">
+            <button type="button" onClick={onClear} className="flex items-center gap-1 text-xs text-fg-mute transition-colors hover:text-fg">
+              <Icon name="Trash" size={13} />
               清空
             </button>
-          </>
+          </div>
         )}
-        {busy ? <Icon name="CircleNotch" size={13} className="animate-spin text-accent" /> : null}
+        {busy ? <Icon name="CircleNotch" size={14} className="animate-spin text-accent" /> : null}
       </div>
 
       <div ref={boxRef} className="relative min-h-0 flex-1">
@@ -553,24 +663,25 @@ function GarmentWall({
           <button
             type="button"
             onClick={onAdd}
+            disabled={locked || busy}
             className={cn(
-              "absolute inset-0 flex flex-col items-center justify-center gap-4 rounded-[28px] border border-dashed transition-all duration-300",
+              "absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-control border border-dashed transition-all duration-300",
               drag ? "border-accent bg-accent/[0.06]" : "border-line-2 hover:border-fg-mute hover:bg-white/[0.02]",
             )}
           >
             <span
               className={cn(
-                "flex h-14 w-14 items-center justify-center rounded-2xl border border-line bg-white/[0.03]",
+                "flex h-12 w-12 items-center justify-center rounded-control border border-line bg-white/[0.03]",
                 drag ? "text-accent" : "text-fg-dim",
               )}
             >
-              <Icon name={busy ? "CircleNotch" : nouns.icon} size={26} className={busy ? "animate-spin text-accent" : undefined} />
+              <Icon name={busy ? "CircleNotch" : nouns.icon} size={22} className={busy ? "animate-spin text-accent" : undefined} />
             </span>
             <div className="text-center">
               <div className="text-base font-medium text-fg">
                 {busy ? "正在读取…" : `拖入或点击添加${nouns.item} · 支持一次 ${MAX_BATCH_GARMENTS} 张`}
               </div>
-              <div className="mt-1 text-xs text-fg-mute">支持拖拽 · 点击选择 · 直接粘贴</div>
+              <div className="mt-1 text-xs text-fg-mute">支持拖拽、点击选择和直接粘贴</div>
             </div>
           </button>
         ) : cellW > 0 && cellH > 0 ? (
@@ -583,14 +694,9 @@ function GarmentWall({
                 <GarmentTile
                   key={gi}
                   garment={g}
-                  cell={cellOf(gi)}
                   locked={locked}
-                  small={small}
                   onReplace={() => onReplace(gi)}
                   onRemove={() => onRemove(gi)}
-                  onRetry={() => onRetry(gi)}
-                  onOpen={() => onOpen(gi)}
-                  modelIndex={0}
                 />
               ))}
               {showAdd ? (
@@ -614,77 +720,27 @@ function GarmentWall({
   );
 }
 
-// ── 网格视图 · 单个服装格（卡片状态循环：服装图 → 暗+百分比 → 结果/⚠重生成）──
+// ── 编排视图 · 单个素材格 ──────────────────────────────────────────────────
 function GarmentTile({
   garment,
-  cell,
   locked,
-  small,
-  modelIndex,
   onReplace,
   onRemove,
-  onRetry,
-  onOpen,
 }: {
   garment: BatchGarment;
-  cell: BatchCell | undefined;
   locked: boolean;
-  small: boolean;
-  modelIndex: number;
   onReplace: () => void;
   onRemove: () => void;
-  onRetry: () => void;
-  onOpen: () => void;
 }) {
-  const success = cell?.status === "success" && !!cell.resultUrl;
-  const dimmed = cell && (cell.status === "waiting" || cell.status === "running" || cell.status === "failed");
-
   return (
-    <div
-      className={cn(
-        "group relative flex items-center justify-center overflow-hidden rounded-control border bg-panel-2/60",
-        success ? "cursor-zoom-in border-line hover:border-line-2" : "border-line",
-      )}
-      onClick={success ? onOpen : undefined}
-    >
-      {success ? (
-        <motion.img
-          key={cell.resultUrl}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.35 }}
-          src={cell.resultUrl}
-          alt={`${garment.name} 结果`}
-          className="max-h-full max-w-full object-contain"
-        />
-      ) : (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={garment.src}
-          alt={garment.name}
-          className={cn("max-h-full max-w-full object-contain transition-opacity duration-300", dimmed && "opacity-30")}
-        />
-      )}
-
-      {cell ? <CellStateLayer cell={cell} pct={displayPct(cell)} small={small} onRetry={onRetry} /> : null}
-
+    <div className="group relative flex items-center justify-center overflow-hidden rounded-control border border-line bg-panel-2/60">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={garment.src} alt={garment.name} className="max-h-full max-w-full object-contain" />
       <span className="pointer-events-none absolute inset-x-1 bottom-1 truncate rounded bg-black/50 px-1.5 py-0.5 text-center text-[10px] leading-tight text-fg backdrop-blur-sm">
         {garment.name}
       </span>
-
-      {success ? (
-        <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1.5 bg-black/45 p-2 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
-          <HoverBtn icon="ArrowsLeftRight" label="对比" onClick={onOpen} />
-          <HoverBtn
-            icon="DownloadSimple"
-            label="下载"
-            onClick={() => cell?.resultUrl && downloadCellResult(cell.resultUrl, garment.name, modelIndex)}
-          />
-          <HoverBtn icon="ArrowClockwise" label="重生成" onClick={onRetry} />
-          <HoverBtn icon="ImageSquare" label="设为画布" onClick={() => cell?.resultUrl && setBatchResultAsCanvas(cell.resultUrl)} />
-        </div>
-      ) : !cell && !locked ? (
-        <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
+      {!locked ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-1.5 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:inset-auto [@media(hover:none)]:right-1 [@media(hover:none)]:top-1 [@media(hover:none)]:rounded-full [@media(hover:none)]:bg-transparent [@media(hover:none)]:opacity-100 [@media(hover:none)]:backdrop-blur-none">
           <HoverBtn icon="ArrowClockwise" label="更换" onClick={onReplace} />
           <HoverBtn icon="X" label="删除" onClick={onRemove} />
         </div>
@@ -693,7 +749,7 @@ function GarmentTile({
   );
 }
 
-// ── 全匹配矩阵（≥2 位模特）：行=服装、列=模特，行列头吸附，超屏纵向滚动 ──────
+// ── 结果矩阵：行=素材、列=主图，行列头吸附，超屏双轴滚动 ───────────────────
 const MATRIX_HEADER_BG = "bg-[#141416]"; // 吸附行列头必须实底色，滚动时不透出下层格子
 
 function MatrixView({
@@ -728,10 +784,12 @@ function MatrixView({
   onOpen: (mi: number, gi: number) => void;
 }) {
   const retryCell = useBatchStore((s) => s.retryCell);
+  const reduceMotion = useReducedMotion();
   const canAddModel = !locked && models.length < MAX_BATCH_MODELS;
   const canAddGarment = !locked && garments.length < MAX_BATCH_GARMENTS;
 
   function retryRow(gi: number) {
+    if (locked || busy) return;
     for (let mi = 0; mi < models.length; mi++) {
       const c = cellOf(mi, gi);
       if (c && (c.status === "failed" || c.status === "success")) retryCell(mi, gi);
@@ -741,16 +799,23 @@ function MatrixView({
     const g = garments[gi];
     for (let mi = 0; mi < models.length; mi++) {
       const c = cellOf(mi, gi);
-      if (c?.status === "success" && c.resultUrl) downloadCellResult(c.resultUrl, g.name, mi);
+      if (c?.status === "success" && c.resultUrl) downloadCellResult(c.resultUrl, g.name, mi, c.wearTypeId);
     }
   }
 
   return (
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-panel border border-line">
+    <div
+      className="min-h-0 min-w-0 flex-1 overflow-auto rounded-panel border border-line focus-visible:border-accent focus-visible:outline-none"
+      role="region"
+      aria-label="批量生成结果矩阵"
+      tabIndex={0}
+    >
       <div
         className="grid"
         style={{
-          gridTemplateColumns: `132px repeat(${models.length}, minmax(140px, 1fr))${canAddModel ? " 68px" : ""}`,
+          gridTemplateColumns: `132px repeat(${models.length}, minmax(176px, 240px))${canAddModel ? " 68px" : ""}`,
+          width: "max-content",
+          minWidth: "100%",
         }}
       >
         {/* 表头行：左上角 + 底图列头（sticky top）+ 添加入口 */}
@@ -771,7 +836,7 @@ function MatrixView({
                 {nouns.base} {mi + 1}
               </span>
               {locked ? null : (
-                <div className="absolute inset-0 flex items-center justify-center gap-1 bg-black/45 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-1 bg-black/45 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:inset-auto [@media(hover:none)]:right-1 [@media(hover:none)]:top-1 [@media(hover:none)]:rounded-full [@media(hover:none)]:bg-transparent [@media(hover:none)]:opacity-100">
                   <HoverBtn icon="ArrowClockwise" label="更换" onClick={() => onReplaceModel(mi)} />
                   <HoverBtn icon="X" label="删除" onClick={() => onRemoveModel(mi)} />
                 </div>
@@ -799,8 +864,8 @@ function MatrixView({
               <div className="relative w-fit max-w-full overflow-hidden rounded-control border border-line">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={g.src} alt={g.name} className="block h-24 max-w-full object-contain" />
-                <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                  <HoverBtn icon="ArrowClockwise" label="整行重生成" onClick={() => retryRow(gi)} />
+                <div className="pointer-events-none absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-0 transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:inset-auto [@media(hover:none)]:right-1 [@media(hover:none)]:top-1 [@media(hover:none)]:max-w-[68px] [@media(hover:none)]:rounded-control [@media(hover:none)]:bg-black/25 [@media(hover:none)]:opacity-100 [@media(hover:none)]:backdrop-blur-sm">
+                  {locked ? null : <HoverBtn icon="ArrowClockwise" label="整行重生成" onClick={() => retryRow(gi)} />}
                   <HoverBtn icon="DownloadSimple" label="下载整行" onClick={() => downloadRow(gi)} />
                   {locked ? null : (
                     <>
@@ -817,38 +882,46 @@ function MatrixView({
             {models.map((_, mi) => {
               const cell = cellOf(mi, gi);
               const success = cell?.status === "success" && !!cell.resultUrl;
+              const cellNouns = cell ? batchNouns(cell.wearTypeId) : nouns;
               return (
                 <div key={mi} className="border-b border-line p-2">
                   <div
                     className={cn(
                       "group relative flex h-40 items-center justify-center overflow-hidden rounded-control border bg-panel-2/40",
-                      success ? "cursor-zoom-in border-line hover:border-line-2" : "border-line/60",
+                      success ? "border-line hover:border-line-2 group-focus-within:border-accent" : "border-line/60",
                     )}
-                    onClick={success ? () => onOpen(mi, gi) : undefined}
                   >
                     {success ? (
-                      <motion.img
-                        key={cell.resultUrl}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.35 }}
-                        src={cell.resultUrl}
-                        alt={`${g.name} × ${nouns.base}${mi + 1}`}
-                        className="max-h-full max-w-full object-contain"
-                      />
+                      <button
+                        type="button"
+                        aria-label={`查看 ${g.name} 与${cellNouns.base}${mi + 1}的生成结果`}
+                        onClick={() => onOpen(mi, gi)}
+                        disabled={busy}
+                        className="absolute inset-0 flex cursor-zoom-in items-center justify-center focus:outline-none disabled:cursor-default"
+                      >
+                        <motion.img
+                          key={cell.resultUrl}
+                          initial={reduceMotion ? false : { opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: reduceMotion ? 0 : 0.35 }}
+                          src={cell.resultUrl}
+                          alt={`${g.name} × ${cellNouns.base}${mi + 1}`}
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </button>
                     ) : cell ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={g.src} alt="" aria-hidden className="max-h-full max-w-full object-contain opacity-25" />
                     ) : (
-                      <span className="text-[10px] text-fg-mute">—</span>
+                      <span className="text-[10px] text-fg-mute">-</span>
                     )}
                     {cell ? (
                       <CellStateLayer cell={cell} pct={displayPct(cell)} small onRetry={() => onRetry(mi, gi)} />
                     ) : null}
-                    {success ? (
-                      <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-hover:opacity-100">
+                    {success && !busy ? (
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-1.5 bg-black/45 opacity-0 backdrop-blur-[1px] transition-opacity duration-200 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:inset-auto [@media(hover:none)]:right-1 [@media(hover:none)]:top-1 [@media(hover:none)]:rounded-full [@media(hover:none)]:bg-transparent [@media(hover:none)]:opacity-100 [@media(hover:none)]:backdrop-blur-none">
                         <HoverBtn icon="ArrowsLeftRight" label="对比" onClick={() => onOpen(mi, gi)} />
-                        <HoverBtn icon="ArrowClockwise" label="重生成" onClick={() => onRetry(mi, gi)} />
+                        {locked ? null : <HoverBtn icon="ArrowClockwise" label="重生成" onClick={() => onRetry(mi, gi)} />}
                       </div>
                     ) : null}
                   </div>

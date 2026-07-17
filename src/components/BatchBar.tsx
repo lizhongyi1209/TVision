@@ -1,9 +1,8 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
-import { useBatchStore } from "@/lib/batchStore";
 import { batchNouns, WEAR_TYPES } from "@/lib/batchPrompts";
+import { useBatchStore } from "@/lib/batchStore";
 import { MAX_BATCH_TASKS } from "@/lib/limits";
 import { diag } from "@/lib/logStore";
 import { ASPECT_RATIOS, BILLINGS, comboError, GPT_IMAGE_2_RATIOS, MODELS, QUALITY_OPTIONS, resolutionsFor } from "@/lib/models";
@@ -12,13 +11,12 @@ import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
 import { cn, downloadUrl } from "@/lib/utils";
 import { Icon } from "./icons";
 import { ModelIcon } from "./modelIcons";
-import { Button, Select } from "./ui";
+import { Button, Segmented, Select } from "./ui";
 
-// 批量生成栏（PLAN-BATCH T5）：视觉对齐 GenerateBar 的底部玻璃面板。空闲态是
-// 类型/提示词/参数 + 「生成 N 张」；运行态换成总进度条 + 停止；完成态给
-// 重试未成功 + 打包下载。运行/停止本身全在 batchStore 引擎里，这里只派发。
-
-export function BatchBar() {
+// Persistent batch settings rail. It replaces the old bottom floating bar so
+// task configuration, run state, and primary actions stay in one predictable
+// place while the right side is reserved for assets and results.
+export function BatchSettingsPanel({ busy = false }: { busy?: boolean }) {
   const models = useBatchStore((s) => s.models);
   const garments = useBatchStore((s) => s.garments);
   const wearTypeId = useBatchStore((s) => s.wearTypeId);
@@ -47,15 +45,13 @@ export function BatchBar() {
   const resOptions = resolutionsFor(params.model);
   const cErr = comboError(params.model, params.resolution, params.billing, params.aspectRatio);
   const overCap = total > MAX_BATCH_TASKS;
-  const canGenerate = models.length > 0 && garments.length > 0 && !!prompt.trim() && !cErr && !overCap && !running;
+  const canGenerate = models.length > 0 && garments.length > 0 && !!prompt.trim() && !cErr && !overCap && !running && !busy;
 
   const finished = cells.filter((c) => c.status === "success" || c.status === "failed").length;
   const successCells = cells.filter((c) => c.status === "success" && !!c.resultUrl);
   const failedCount = cells.filter((c) => c.status === "failed").length;
   const pct = cells.length ? Math.round((finished / cells.length) * 100) : 0;
 
-  // 与 GenerateBar.onModel 相同的联动收敛：分辨率回退到该模型支持的档位，
-  // GPT Image 2 不在预设表里的比例回落 auto。
   function onModel(v: string) {
     const model = v as ModelName;
     const rs = resolutionsFor(model);
@@ -102,17 +98,14 @@ export function BatchBar() {
     startRun();
   }
 
-  // 打包下载（D10）：把 success 格的本地文件名 + 期望的 zip 内命名交给
-  // /api/batch/export，拿回 zip blob 触发下载。resultUrl 一定是
-  // /api/media/<file> 形式（batchStore 只存本地落盘地址；上游直链兜底的
-  // 情况在批量里按未成功计），非本地地址直接跳过。
   async function exportZip() {
     const files = successCells
       .map((c) => {
         const m = /^\/api\/media\/([^/?#]+)$/.exec(c.resultUrl || "");
         if (!m) return null;
         const g = garments[c.garmentIndex];
-        return { file: decodeURIComponent(m[1]), name: `${g?.name ?? nouns.item}-${nouns.base}${c.modelIndex + 1}.png` };
+        const cellNouns = batchNouns(c.wearTypeId);
+        return { file: decodeURIComponent(m[1]), name: `${g?.name ?? cellNouns.item}-${cellNouns.base}${c.modelIndex + 1}.png` };
       })
       .filter((x): x is { file: string; name: string } => !!x);
     if (!files.length) {
@@ -143,164 +136,187 @@ export function BatchBar() {
     }
   }
 
-  // 初始状态（尚未上传任何图片）隐藏整个面板，上传第一张后再出现。
-  const hasAny = models.length > 0 || garments.length > 0;
+  const statusLabel = running ? "运行中" : done ? "已完成" : "未运行";
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex justify-center px-4 pb-4">
-      <AnimatePresence>
-        {hasAny ? <motion.div
-          key="batchbar"
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 260, damping: 28 }}
-          className="glass pointer-events-auto w-[min(920px,96vw)] rounded-panel p-3.5"
-        >
-          {/* 芯片行：批量换装 + 类型 + 计数；运行/完成态换成进度与动作 */}
-          <div className="mb-2.5 flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] py-1 pl-2 pr-3 text-sm">
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-accent">
-                <Icon name={nouns.icon} size={13} weight="bold" />
-              </span>
-              <span className="font-medium text-fg">{nouns.chip}</span>
-            </span>
-
-            {running ? (
-              <>
-                <div className="flex min-w-[160px] flex-1 items-center gap-2.5">
-                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="whitespace-nowrap text-xs text-fg-dim">
-                    已完成 {finished}/{cells.length}
-                    {failedCount ? ` · ${failedCount} 张未成功` : ""}
-                  </span>
-                </div>
-                <Button variant="ghost" onClick={stopRun} className="h-8 px-3 text-xs">
-                  <Icon name="Square" size={12} weight="fill" />
-                  停止
-                </Button>
-              </>
-            ) : done ? (
-              <>
-                <span className="inline-flex items-center gap-1.5 text-sm text-fg-dim">
-                  <Icon name="Check" size={14} weight="bold" className="text-accent" />
-                  完成 {successCells.length}/{cells.length} 张
-                  {failedCount ? ` · ${failedCount} 张未成功` : ""}
-                </span>
-                <div className="ml-auto flex items-center gap-2">
-                  {failedCount ? (
-                    <Button variant="ghost" onClick={retryFailed} className="h-8 px-3 text-xs">
-                      <Icon name="ArrowClockwise" size={13} />
-                      重试未成功
-                    </Button>
-                  ) : null}
-                  {successCells.length ? (
-                    <Button variant="ghost" onClick={exportZip} disabled={exporting} className="h-8 px-3 text-xs">
-                      <Icon name={exporting ? "CircleNotch" : "DownloadSimple"} size={13} className={exporting ? "animate-spin" : undefined} />
-                      打包下载 {successCells.length} 张
-                    </Button>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <>
-                <Select
-                  value={promptEdited ? "custom" : wearTypeId}
-                  onChange={(v) => {
-                    if (v !== "custom") setWearType(v);
-                  }}
-                  options={[
-                    ...WEAR_TYPES.map((w) => ({ value: w.id, label: w.label })),
-                    ...(promptEdited ? [{ value: "custom", label: "自定义" }] : []),
-                  ]}
-                  className="w-[136px]"
-                />
-                <span className="text-sm text-fg-mute">
-                  {models.length && garments.length
-                    ? `${models.length} ${nouns.baseUnit}${nouns.base} × ${garments.length} ${nouns.itemUnit}${nouns.item}`
-                    : `先在上方添加${nouns.base}和${nouns.item}`}
-                </span>
-              </>
+    <aside className="flex w-full shrink-0 flex-col border-b border-line bg-panel/55 lg:h-full lg:w-[304px] lg:border-b-0 lg:border-r">
+      <div className="px-4 py-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-base font-medium text-fg">任务设置</div>
+            <div className="mt-0.5 text-[11px] text-fg-mute">{nouns.chip}</div>
+          </div>
+          <span
+            className={cn(
+              "rounded-full px-2 py-1 text-[10px] font-medium",
+              running || done ? "bg-accent/12 text-accent" : "bg-white/[0.05] text-fg-mute",
             )}
+          >
+            {statusLabel}
+          </span>
+        </div>
+
+        <fieldset disabled={running} className={cn("space-y-4", running && "opacity-55")}>
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-medium tracking-wide text-fg-mute">任务类型</span>
+            <Select
+              value={promptEdited ? "custom" : wearTypeId}
+              onChange={(v) => {
+                if (v !== "custom") setWearType(v);
+              }}
+              options={[
+                ...WEAR_TYPES.map((w) => ({ value: w.id, label: w.label })),
+                ...(promptEdited ? [{ value: "custom", label: "自定义" }] : []),
+              ]}
+              className="w-full"
+              disabled={running}
+            />
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-medium tracking-wide text-fg-mute">提示词</span>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={
+                wearTypeId === "generic"
+                  ? `描述${nouns.base}与${nouns.item}之间的替换关系…`
+                  : `${nouns.promptLabel}（切换类型会重写，也可手动修改）…`
+              }
+              rows={5}
+              disabled={running}
+              className="w-full resize-none rounded-control border border-line bg-panel-2/60 p-3 text-sm leading-relaxed text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none disabled:cursor-not-allowed"
+            />
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-medium tracking-wide text-fg-mute">生成模型</span>
+            <Select
+              value={params.model}
+              onChange={onModel}
+              options={MODELS.map((m) => ({
+                value: m.name,
+                label: m.name,
+                hint: m.blurb,
+                icon: <ModelIcon model={m.name} size={16} />,
+              }))}
+              className="w-full"
+              disabled={running}
+            />
+          </label>
+
+          <div className="flex flex-col items-start gap-1.5">
+            <span className="text-[11px] font-medium tracking-wide text-fg-mute">分辨率</span>
+            <Segmented
+              value={params.resolution}
+              onChange={(v) => updateParams({ resolution: v as Resolution })}
+              options={resOptions.map((r) => ({ value: r, label: r }))}
+            />
           </div>
 
-          {/* 提示词 + 参数（运行中锁定 — D7 的编辑锁同样盖到生成栏） */}
-          {running ? null : (
-            <>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={
-                  wearTypeId === "generic"
-                    ? `用自己的话描述要怎么替换（第一张是${nouns.base}、第二张是${nouns.item}），或切换上方类型使用预设…`
-                    : `${nouns.promptLabel}（切换上方类型会重写这里，也可手动修改）…`
-                }
-                rows={2}
-                className="w-full resize-none rounded-control border border-line bg-panel-2/60 p-3 text-sm leading-relaxed text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none"
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block min-w-0 space-y-1.5">
+              <span className="text-[11px] font-medium tracking-wide text-fg-mute">画面比例</span>
+              <Select
+                value={params.aspectRatio}
+                onChange={(v) => updateParams({ aspectRatio: v })}
+                options={ASPECT_RATIOS.map((a) => ({
+                  value: a,
+                  label: a === "auto" ? "自动" : a,
+                  disabled: params.model === "GPT Image 2" && !GPT_IMAGE_2_RATIOS.includes(a),
+                }))}
+                className="w-full"
+                disabled={running}
               />
+            </label>
+            <label className="block min-w-0 space-y-1.5">
+              <span className="text-[11px] font-medium tracking-wide text-fg-mute">计费线路</span>
+              <Select
+                value={params.billing}
+                onChange={(v) => updateParams({ billing: v as Billing })}
+                options={BILLINGS.map((b) => ({ value: b, label: b }))}
+                className="w-full"
+                disabled={running}
+              />
+            </label>
+          </div>
 
-              <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <Select
-                  value={params.model}
-                  onChange={onModel}
-                  options={MODELS.map((m) => ({
-                    value: m.name,
-                    label: m.name,
-                    hint: m.blurb,
-                    icon: <ModelIcon model={m.name} size={16} />,
-                  }))}
-                  className="w-[184px]"
-                />
-                <Select
-                  value={params.resolution}
-                  onChange={(v) => updateParams({ resolution: v as Resolution })}
-                  options={resOptions.map((r) => ({ value: r, label: r }))}
-                  className="w-[92px]"
-                />
-                <Select
-                  value={params.aspectRatio}
-                  onChange={(v) => updateParams({ aspectRatio: v })}
-                  options={ASPECT_RATIOS.map((a) => ({
-                    value: a,
-                    label: a === "auto" ? "自动比例" : a,
-                    disabled: params.model === "GPT Image 2" && !GPT_IMAGE_2_RATIOS.includes(a),
-                  }))}
-                  className="w-[116px]"
-                />
-                <Select
-                  value={params.billing}
-                  onChange={(v) => updateParams({ billing: v as Billing })}
-                  options={BILLINGS.map((b) => ({ value: b, label: b }))}
-                  className="w-[88px]"
-                />
-                {params.model === "GPT Image 2" ? (
-                  <Select
-                    value={params.quality}
-                    onChange={(v) => updateParams({ quality: v as Quality })}
-                    options={QUALITY_OPTIONS}
-                    className="w-[88px]"
-                  />
-                ) : null}
+          {params.model === "GPT Image 2" ? (
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-medium tracking-wide text-fg-mute">生成质量</span>
+              <Select
+                value={params.quality}
+                onChange={(v) => updateParams({ quality: v as Quality })}
+                options={QUALITY_OPTIONS}
+                className="w-full"
+                disabled={running}
+              />
+            </label>
+          ) : null}
+        </fieldset>
 
-                <div className="ml-auto flex items-center gap-3">
-                  <Button variant="primary" onClick={generate} disabled={!canGenerate} className="px-6">
-                    <Icon name="Lightning" size={16} weight="fill" />
-                    生成 {total > 0 ? total : ""} 张
-                  </Button>
-                </div>
-              </div>
+        {cErr || overCap ? (
+          <div className="mt-4 flex items-start gap-2 rounded-control border border-amber-300/20 bg-amber-300/[0.06] p-3 text-xs leading-relaxed text-amber-300">
+            <Icon name="Warning" size={14} className="mt-0.5 shrink-0" />
+            <span>{cErr || `单次最多 ${MAX_BATCH_TASKS} 张（当前 ${total} 张），请减少${nouns.base}或${nouns.item}分批生成`}</span>
+          </div>
+        ) : null}
+      </div>
 
-              {cErr || overCap ? (
-                <div className={cn("mt-2 flex items-center gap-1.5 text-xs text-amber-300")}>
-                  <Icon name="Warning" size={13} />
-                  {cErr || `单次最多 ${MAX_BATCH_TASKS} 张（当前 ${total} 张），请减少${nouns.base}或${nouns.item}分批生成`}
-                </div>
-              ) : null}
-            </>
-          )}
-        </motion.div> : null}
-      </AnimatePresence>
-    </div>
+      <div className="shrink-0 border-t border-line bg-ink/35 p-4">
+        <div className="mb-3 flex items-start justify-between gap-3 text-sm">
+          <span className="text-fg-mute">任务规模</span>
+          <span className="text-right font-medium text-fg">
+            {models.length} {nouns.baseUnit}{nouns.base} × {garments.length} {nouns.itemUnit}{nouns.item}
+            <span className="mt-0.5 block text-xs font-normal text-fg-mute">共 {total} 张</span>
+          </span>
+        </div>
+
+        {running ? (
+          <div className="space-y-3">
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
+              <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="flex items-center justify-between gap-2 text-xs text-fg-dim">
+              <span>已完成 {finished}/{cells.length}</span>
+              <span>{failedCount ? `${failedCount} 张未成功` : `${pct}%`}</span>
+            </div>
+            <Button variant="ghost" onClick={stopRun} className="w-full rounded-control">
+              <Icon name="Square" size={13} weight="fill" />
+              停止
+            </Button>
+          </div>
+        ) : done ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-xs text-fg-dim">
+              <Icon name="Check" size={14} weight="bold" className="text-accent" />
+              成功 {successCells.length}/{cells.length}
+              {failedCount ? ` · ${failedCount} 张未成功` : ""}
+            </div>
+            {failedCount ? (
+              <Button variant="ghost" onClick={retryFailed} disabled={busy} className="w-full rounded-control">
+                <Icon name="ArrowClockwise" size={14} />
+                重试未成功
+              </Button>
+            ) : null}
+            {successCells.length ? (
+              <Button variant="primary" onClick={exportZip} disabled={exporting} className="w-full rounded-control">
+                <Icon name={exporting ? "CircleNotch" : "DownloadSimple"} size={15} className={exporting ? "animate-spin" : undefined} />
+                打包下载 {successCells.length} 张
+              </Button>
+            ) : null}
+            <Button variant="ghost" onClick={generate} disabled={!canGenerate} className="w-full rounded-control">
+              <Icon name="Lightning" size={15} weight="fill" />
+              重新生成全部 {total > 0 ? `${total} 张` : ""}
+            </Button>
+          </div>
+        ) : (
+          <Button variant="primary" onClick={generate} disabled={!canGenerate} className="w-full rounded-control">
+            <Icon name="Lightning" size={16} weight="fill" />
+            生成 {total > 0 ? `${total} 张` : ""}
+          </Button>
+        )}
+      </div>
+    </aside>
   );
 }

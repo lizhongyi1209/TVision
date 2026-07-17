@@ -1,0 +1,179 @@
+import type {
+  AspectRatio,
+  SeedanceModel,
+  VideoJobParams,
+  VideoModel,
+  VideoResolution,
+} from "./videoTypes";
+
+export const VIDEO_MODEL_IDS: Record<VideoModel, string> = {
+  "v3": "kling-v3",
+  "v2-6": "kling-v2-6",
+  "v3-omni": "kling-v3-omni",
+  // Keep UI labels stable while sending the model IDs used by the working
+  // ComfyUI Seedance integration.
+  "seedance-2.0": "doubao-seedance-2-0-260128",
+  "seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
+};
+
+const SEEDANCE_MODELS = new Set<VideoModel>(["seedance-2.0", "seedance-2.0-fast"]);
+
+const MODEL_RESOLUTIONS: Record<VideoModel, readonly VideoResolution[]> = {
+  "v3": ["720p", "1080p", "4K"],
+  "v2-6": ["720p", "1080p"],
+  "v3-omni": ["720p", "1080p", "4K"],
+  "seedance-2.0": ["480p", "720p", "1080p", "4K"],
+  "seedance-2.0-fast": ["480p", "720p"],
+};
+
+const SEEDANCE_RATIOS = new Set<AspectRatio>([
+  "智能",
+  "16:9",
+  "4:3",
+  "1:1",
+  "3:4",
+  "9:16",
+  "21:9",
+]);
+
+export function isSeedanceModel(model: string): model is SeedanceModel {
+  return SEEDANCE_MODELS.has(model as VideoModel);
+}
+
+export function isVideoModel(model: string): model is VideoModel {
+  return Object.prototype.hasOwnProperty.call(VIDEO_MODEL_IDS, model);
+}
+
+export function allowedVideoResolutions(model: VideoModel): readonly VideoResolution[] {
+  return MODEL_RESOLUTIONS[model];
+}
+
+export function allowedVideoDurations(model: VideoModel): readonly number[] {
+  if (model === "v2-6") return [5, 10];
+  if (isSeedanceModel(model)) return [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  return [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+}
+
+export function maxReferenceImages(model: VideoModel): number {
+  return isSeedanceModel(model) ? 9 : 7;
+}
+
+export function supportsReferenceMedia(model: VideoModel): boolean {
+  return model === "v3-omni" || isSeedanceModel(model);
+}
+
+export function supportsShots(model: VideoModel): boolean {
+  return model !== "v2-6" && !isSeedanceModel(model);
+}
+
+function cleanUrls(values: unknown, limit: number): string[] {
+  if (!Array.isArray(values)) return [];
+  const urls = values
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+  if (urls.length > limit) throw new Error(`参考素材数量超过 ${limit} 个上限`);
+  for (const url of urls) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("参考素材 URL 格式无效");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("参考素材 URL 只支持 HTTP 或 HTTPS");
+    }
+  }
+  return urls;
+}
+
+export function buildSeedanceGenerationBody(params: VideoJobParams): Record<string, unknown> {
+  if (!isSeedanceModel(params.model)) throw new Error("不是 Seedance 2.0 模型");
+
+  const prompt = (params.prompt ?? "").trim();
+  if (!prompt) throw new Error("提示词不能为空");
+
+  const resolutions = allowedVideoResolutions(params.model);
+  if (!resolutions.includes(params.mode)) {
+    throw new Error(`${params.model} 不支持 ${params.mode} 分辨率`);
+  }
+
+  const duration = params.duration ?? 5;
+  if (!Number.isInteger(duration) || (duration !== -1 && (duration < 4 || duration > 15))) {
+    throw new Error("Seedance 时长仅支持 4-15 秒的整数或自动");
+  }
+
+  const ratio = params.aspectRatio ?? "智能";
+  if (!SEEDANCE_RATIOS.has(ratio)) throw new Error("Seedance 宽高比无效");
+
+  const firstUrl = cleanUrls(params.imageUrl ? [params.imageUrl] : [], 1)[0];
+  const lastUrl = cleanUrls(params.tailUrl ? [params.tailUrl] : [], 1)[0];
+  const referenceUrls = cleanUrls(params.refUrls, 9);
+  const videoUrls = cleanUrls(params.videoUrls, 3);
+  const audioUrls = cleanUrls(params.audioUrls, 3);
+
+  if ((firstUrl || lastUrl) && (referenceUrls.length || videoUrls.length || audioUrls.length)) {
+    throw new Error("首尾帧模式不能与多模态参考素材混用");
+  }
+  if (audioUrls.length && !firstUrl && !referenceUrls.length && !videoUrls.length) {
+    throw new Error("参考音频不能单独提交，请同时添加图片或视频");
+  }
+
+  const images: { url: string; role: "first_frame" | "last_frame" | "reference_image" }[] = [];
+  if (firstUrl) images.push({ url: firstUrl, role: "first_frame" });
+  if (lastUrl) images.push({ url: lastUrl, role: "last_frame" });
+  for (const url of referenceUrls) images.push({ url, role: "reference_image" });
+
+  const body: Record<string, unknown> = {
+    model: VIDEO_MODEL_IDS[params.model],
+    prompt,
+    resolution: params.mode === "4K" ? "4k" : params.mode,
+    duration,
+    generate_audio: params.sound === true,
+    watermark: params.watermark === true,
+    web_search: params.webSearch === true,
+  };
+  const negativePrompt = (params.negativePrompt ?? "").trim();
+  if (negativePrompt) body.negative_prompt = negativePrompt;
+  if (ratio !== "智能") body.ratio = ratio;
+  if (images.length) body.images = images;
+  if (videoUrls.length) body.videos = videoUrls;
+  if (audioUrls.length) body.audios = audioUrls;
+  return body;
+}
+
+function* payloadObjects(payload: unknown): Generator<Record<string, unknown>> {
+  const queue: unknown[] = [payload];
+  const seen = new Set<unknown>();
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object" || seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+    const record = current as Record<string, unknown>;
+    yield record;
+    queue.push(...Object.values(record));
+  }
+}
+
+export function extractVideoTaskId(payload: unknown): string | null {
+  for (const source of payloadObjects(payload)) {
+    for (const key of ["task_id", "taskId", "id"]) {
+      const value = source[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return null;
+}
+
+export function extractGeneratedVideoUrl(payload: unknown): string | null {
+  for (const source of payloadObjects(payload)) {
+    for (const key of ["video_url", "result_url", "url", "download_url"]) {
+      const value = source[key];
+      if (typeof value === "string" && /^https?:\/\//i.test(value)) return value;
+    }
+  }
+  return null;
+}

@@ -68,6 +68,11 @@ export interface GenMeta {
    *  glance. Record-only — HistoryPage.tsx's pick() lists GenParams fields
    *  explicitly, so this never leaks into updateParams/GenParams. */
   note?: string;
+  /** Task-mode provenance. Optional so older history entries and regular
+   *  single/batch generations keep the same shape. */
+  workflowId?: string;
+  workflowRunId?: string;
+  workflowNodeId?: string;
 }
 
 export interface HistoryItem {
@@ -87,9 +92,13 @@ export interface VideoMeta {
   mode:     string;
   duration: number;
   prompt:   string;
+  negativePrompt?: string;
   shots:    { index: number; prompt: string; duration: number }[];
   sound:    boolean;
+  watermark?: boolean;
+  webSearch?: boolean;
   aspectRatio: string;
+  frameMode?: "refs" | "frames";
   createdAt: number;
 }
 

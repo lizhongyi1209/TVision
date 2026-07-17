@@ -1,8 +1,10 @@
 // 视频创作功能类型（PLAN-VIDEO）。纯类型定义，client+server 共用。
 
-export type KlingModel    = "v3" | "v2-6" | "v3-omni";
-export type KlingMode     = "720p" | "1080p" | "4K";
-export type AspectRatio   = "智能" | "16:9" | "9:16" | "1:1";
+export type KlingModel = "v3" | "v2-6" | "v3-omni";
+export type SeedanceModel = "seedance-2.0" | "seedance-2.0-fast";
+export type VideoModel = KlingModel | SeedanceModel;
+export type VideoResolution = "480p" | "720p" | "1080p" | "4K";
+export type AspectRatio = "智能" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16" | "21:9";
 
 export interface ShotSegment {
   /** 分镜序号（1-based）。 */
@@ -14,27 +16,33 @@ export interface ShotSegment {
 
 /** 前端发给 /api/video/jobs 的请求体。 */
 export interface VideoJobParams {
-  model:         KlingModel;
-  mode:          KlingMode;
+  model:         VideoModel;
+  mode:          VideoResolution;
   duration:      number;
   prompt:        string;
   negativePrompt?: string;
   sound:         boolean;
   aspectRatio?:  AspectRatio;
+  watermark?:    boolean;
+  webSearch?:    boolean;
   /** 起始帧 public_url（已由 /api/video/upload 上传后得到）。 */
   imageUrl?:     string;
   /** 尾帧 public_url（可选）。 */
   tailUrl?:      string;
-  /** v3-omni 参考图 public_url 列表（最多 4 张）。 */
+  /** 多模态参考图 public_url 列表；Seedance 最多 9 张，Kling Omni 最多 7 张。 */
   refUrls?:      string[];
+  /** Seedance 参考视频 public_url 列表（最多 3 个）。 */
+  videoUrls?:    string[];
+  /** Seedance 参考音频 public_url 列表（最多 3 段）。 */
+  audioUrls?:    string[];
   /** 分镜段列表；非空时 prompt 字段可为空。 */
   shots?:        ShotSegment[];
 }
 
 export interface VideoHistoryItem {
   taskId:    string;
-  model:     KlingModel;
-  mode:      KlingMode;
+  model:     VideoModel;
+  mode:      VideoResolution;
   duration:  number;
   prompt:    string;
   shots:     ShotSegment[];

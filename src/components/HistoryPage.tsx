@@ -27,11 +27,17 @@ export function HistoryPage() {
   const setVideoMode   = useVideoStore((s) => s.setMode);
   const setDuration    = useVideoStore((s) => s.setDuration);
   const setPrompt      = useVideoStore((s) => s.setPrompt);
+  const setNegPrompt   = useVideoStore((s) => s.setNegPrompt);
   const setSound       = useVideoStore((s) => s.setSound);
+  const setWatermark   = useVideoStore((s) => s.setWatermark);
+  const setWebSearch   = useVideoStore((s) => s.setWebSearch);
   const setAspectRatio = useVideoStore((s) => s.setAspectRatio);
+  const setFrameMode   = useVideoStore((s) => s.setFrameMode);
+  const clearMediaInputs = useVideoStore((s) => s.clearMediaInputs);
   const setShots       = useVideoStore((s) => s.setShots);
   const toggleShots    = useVideoStore((s) => s.toggleShots);
   const shotsEnabled   = useVideoStore((s) => s.shotsEnabled);
+  const videoPhase     = useVideoStore((s) => s.phase);
   const playHistory    = useVideoStore((s) => s.playHistory);
 
   const refresh = useCallback(async () => {
@@ -73,7 +79,13 @@ export function HistoryPage() {
   }
 
   function pickVideo(it: HistoryItem) {
+    if (["uploading", "submitting", "running"].includes(videoPhase)) {
+      setWorkMode("video");
+      showToast("info", "当前视频任务仍在进行，已返回视频创作等待结果");
+      return;
+    }
     const vm = it.videoMeta;
+    clearMediaInputs();
     // 播放视频（切到视频工作台并显示在播放器里）
     playHistory({
       taskId:    vm?.taskId   ?? it.name,
@@ -89,10 +101,14 @@ export function HistoryPage() {
     // 还原参数
     if (vm) {
       setVideoModel(vm.model as Parameters<typeof setVideoModel>[0]);
+      setFrameMode(vm.frameMode ?? "refs");
       setVideoMode(vm.mode as Parameters<typeof setVideoMode>[0]);
       setDuration(vm.duration);
       setAspectRatio(vm.aspectRatio as Parameters<typeof setAspectRatio>[0]);
       setSound(vm.sound);
+      setNegPrompt(vm.negativePrompt ?? "");
+      setWatermark(vm.watermark ?? false);
+      setWebSearch(vm.webSearch ?? false);
       if (vm.shots?.length) {
         if (!shotsEnabled) toggleShots();
         setShots(vm.shots);
@@ -101,6 +117,9 @@ export function HistoryPage() {
         if (shotsEnabled) toggleShots();
         setPrompt(vm.prompt ?? "");
       }
+    } else {
+      setNegPrompt("");
+      setFrameMode("refs");
     }
     setWorkMode("video");
     showToast("success", vm ? "已切到视频创作并还原当时的参数" : "已切到视频创作");
@@ -173,7 +192,7 @@ export function HistoryPage() {
                           </span>
                           {it.videoMeta && (
                             <span className="px-2 text-center text-[10px] leading-relaxed text-fg-mute">
-                              {it.videoMeta.model} · {it.videoMeta.mode} · {it.videoMeta.duration}s
+                              {it.videoMeta.model} · {it.videoMeta.mode} · {it.videoMeta.duration === -1 ? "自动时长" : `${it.videoMeta.duration}s`}
                             </span>
                           )}
                         </div>
@@ -183,9 +202,20 @@ export function HistoryPage() {
                       )}
                     </button>
 
+                    {!isVideo(it) && it.meta?.workflowRunId ? (
+                      <span
+                        className="pointer-events-none absolute left-1.5 top-1.5 flex h-6 items-center gap-1 rounded-md border border-accent/25 bg-black/65 px-2 text-[9px] text-accent backdrop-blur-sm"
+                        title={it.meta.note || "任务模式生成"}
+                      >
+                        <Icon name="Stack" size={10} />
+                        任务
+                      </span>
+                    ) : null}
+
                     {/* 底部悬浮信息 */}
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5 text-[10px] text-fg-dim opacity-0 transition group-hover:opacity-100">
-                      <span>{formatBytes(it.size)}</span>
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 py-1.5 text-[10px] text-fg-dim opacity-0 transition group-hover:opacity-100">
+                      <span className="min-w-0 truncate">{it.meta?.workflowRunId ? (it.meta.note || "任务模式") : formatBytes(it.size)}</span>
+                      {it.meta?.workflowRunId ? <span className="shrink-0">{formatBytes(it.size)}</span> : null}
                       {isVideo(it) && (
                         <span className="flex items-center gap-0.5">
                           <Icon name="VideoCamera" size={10} />

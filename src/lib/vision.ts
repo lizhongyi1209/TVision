@@ -10,8 +10,12 @@
 // (uses fetch + fs). Imported by route handlers.
 
 import { promises as fs } from "fs";
+import { promises as dns } from "dns";
+import * as http from "http";
+import * as https from "https";
+import { isIP } from "net";
 import path from "path";
-import { VISION_MODELS } from "./visionModels";
+import { VISION_MODELS } from "./visionModels.ts";
 
 const OUTPUT_DIR = path.join(process.cwd(), "output");
 const MEDIA_EXT_TYPES: Record<string, string> = {
@@ -20,6 +24,11 @@ const MEDIA_EXT_TYPES: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
 };
+const REMOTE_IMAGE_TYPES = new Set(Object.values(MEDIA_EXT_TYPES));
+const MAX_REMOTE_IMAGE_BYTES = 14_000_000;
+const MAX_LOCAL_IMAGE_BYTES = 14_000_000;
+const MAX_REMOTE_REDIRECTS = 3;
+const REMOTE_IMAGE_TIMEOUT_MS = 30_000;
 
 export const VISION_CHAT_ENDPOINT = "/v1/chat/completions";
 
@@ -98,34 +107,239 @@ function buildVisionBody(imageDataUrl: string, model: string, withReasoning: boo
  * into a data: URL: the vision call goes out to the external gateway, which
  * can't reach localhost, so local paths must be read straight off disk.
  */
+export function isPrivateOrReservedIp(address: string): boolean {
+  const version = isIP(address);
+  if (version === 4) {
+    const parts = address.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+    const [a, b, c] = parts;
+    return a === 0
+      || a === 10
+      || a === 127
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 0 && c === 0)
+      || (a === 192 && b === 0 && c === 2)
+      || (a === 192 && b === 168)
+      || (a === 192 && b === 88 && c === 99)
+      || (a === 198 && (b === 18 || b === 19))
+      || (a === 198 && b === 51 && c === 100)
+      || (a === 203 && b === 0 && c === 113)
+      || a >= 224;
+  }
+  if (version === 6) {
+    const lower = address.toLowerCase().split("%")[0];
+    const mapped = /(?:^|:)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(lower);
+    if (mapped) return isPrivateOrReservedIp(mapped[1]);
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
+    if (mappedHex) {
+      const high = Number.parseInt(mappedHex[1], 16);
+      const low = Number.parseInt(mappedHex[2], 16);
+      return isPrivateOrReservedIp(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+    }
+    if (lower === "::" || lower === "::1") return true;
+    const first = Number.parseInt(lower.split(":")[0] || "0", 16);
+    return (first & 0xfe00) === 0xfc00
+      || (first & 0xffc0) === 0xfe80
+      || (first & 0xffc0) === 0xfec0
+      || (first & 0xff00) === 0xff00
+      || lower.startsWith("2001:db8:")
+      || lower.startsWith("2001:10:")
+      || lower.startsWith("2001:20:");
+  }
+  return true;
+}
+
+export function isSupportedImageDataUrl(src: string): boolean {
+  return /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=\r\n]+$/i.test(src);
+}
+
+function localMediaName(src: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(src, "http://local.invalid");
+  } catch {
+    return null;
+  }
+  if (!parsed.pathname.startsWith("/api/media/")) return null;
+  const encoded = parsed.pathname.slice("/api/media/".length);
+  if (!encoded || encoded.includes("/")) return null;
+  let name: string;
+  try {
+    name = decodeURIComponent(encoded);
+  } catch {
+    return null;
+  }
+  if (!name || path.basename(name) !== name || !MEDIA_EXT_TYPES[path.extname(name).toLowerCase()]) return null;
+  return name;
+}
+
+/** Browser-submitted workflow inputs must be self-contained. Even authenticated
+ * /api/media names are not accepted here because output storage is not yet user-scoped. */
+export function isAllowedWorkflowImageSource(src: string): boolean {
+  return isSupportedImageDataUrl(src);
+}
+
+async function readLocalImage(file: string): Promise<Buffer> {
+  const handle = await fs.open(file, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("本地图片不是文件");
+    if (stat.size > MAX_LOCAL_IMAGE_BYTES) throw new Error("本地图片超过大小上限");
+    const bytes = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (!result.bytesRead) break;
+      offset += result.bytesRead;
+    }
+    return bytes.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function resolvePublicAddress(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
+  const normalizedHostname = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const literalFamily = isIP(normalizedHostname);
+  const addresses = literalFamily
+    ? [{ address: normalizedHostname, family: literalFamily }]
+    : await dns.lookup(normalizedHostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some((entry) => isPrivateOrReservedIp(entry.address))) {
+    throw new Error("远程图片地址指向私有或保留网络");
+  }
+  const selected = addresses[0];
+  return { address: selected.address, family: selected.family as 4 | 6 };
+}
+
+async function withinDeadline<T>(promise: Promise<T>, deadlineAt: number): Promise<T> {
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) throw new Error("远程图片读取超时");
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("远程图片读取超时")), remaining);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function readRemoteImage(
+  url: URL,
+  redirectCount = 0,
+  deadlineAt = Date.now() + REMOTE_IMAGE_TIMEOUT_MS,
+): Promise<{ bytes: Buffer; type: string }> {
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("仅支持 HTTP(S) 图片地址");
+  if (url.username || url.password) throw new Error("远程图片地址不能包含认证信息");
+  if (redirectCount > MAX_REMOTE_REDIRECTS) throw new Error("远程图片重定向次数过多");
+  const resolved = await withinDeadline(resolvePublicAddress(url.hostname), deadlineAt);
+  const client = url.protocol === "https:" ? https : http;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let totalTimer: NodeJS.Timeout | undefined;
+    const finishReject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      if (totalTimer) clearTimeout(totalTimer);
+      reject(error);
+    };
+    const finishResolve = (value: { bytes: Buffer; type: string }) => {
+      if (settled) return;
+      settled = true;
+      if (totalTimer) clearTimeout(totalTimer);
+      resolve(value);
+    };
+    const request = client.get(url, {
+      family: resolved.family,
+      lookup: (_hostname, _options, callback) => callback(null, resolved.address, resolved.family),
+      headers: { Accept: "image/png,image/jpeg,image/webp", "User-Agent": "TVision/1.0" },
+    }, (response) => {
+      const status = response.statusCode || 0;
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const location = response.headers.location;
+        response.resume();
+        if (!location) return finishReject(new Error("远程图片重定向缺少地址"));
+        let redirected: URL;
+        try {
+          redirected = new URL(location, url);
+        } catch {
+          return finishReject(new Error("远程图片重定向地址无效"));
+        }
+        void readRemoteImage(redirected, redirectCount + 1, deadlineAt).then(finishResolve, finishReject);
+        return;
+      }
+      if (status !== 200) {
+        response.resume();
+        return finishReject(new Error(`无法读取图片 (HTTP ${status})`));
+      }
+      const type = String(response.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+      if (!REMOTE_IMAGE_TYPES.has(type)) {
+        response.resume();
+        return finishReject(new Error("远程地址返回的不是受支持图片"));
+      }
+      const declaredLength = Number(response.headers["content-length"] || 0);
+      if (declaredLength > MAX_REMOTE_IMAGE_BYTES) {
+        response.resume();
+        return finishReject(new Error("远程图片超过大小上限"));
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > MAX_REMOTE_IMAGE_BYTES) {
+          response.destroy(new Error("远程图片超过大小上限"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        finishResolve({ bytes: Buffer.concat(chunks), type });
+      });
+      response.on("error", finishReject);
+    });
+    totalTimer = setTimeout(
+      () => request.destroy(new Error("远程图片读取超时")),
+      Math.max(1, deadlineAt - Date.now()),
+    );
+    request.setTimeout(Math.max(1, deadlineAt - Date.now()), () => request.destroy(new Error("远程图片读取超时")));
+    request.on("error", finishReject);
+  });
+}
+
 export async function resolveImageToDataUrl(src: string): Promise<string> {
-  if (src.startsWith("data:")) return src;
+  if (src.startsWith("data:")) {
+    if (!isSupportedImageDataUrl(src)) throw new Error("不支持或无效的图片 data URL");
+    return src;
+  }
 
   if (src.startsWith("/")) {
-    const name = path.basename(src.split("?")[0]);
+    const name = localMediaName(src);
+    if (!name) throw new Error("无法识别的本地图片地址");
     const ext = path.extname(name).toLowerCase();
     const type = MEDIA_EXT_TYPES[ext];
     if (!type) throw new Error("不支持的图片格式");
-    let bytes: Buffer;
     try {
-      bytes = await fs.readFile(path.join(OUTPUT_DIR, name));
-    } catch {
-      throw new Error("找不到本地图片文件");
+      const bytes = await readLocalImage(path.join(OUTPUT_DIR, name));
+      return `data:${type};base64,${bytes.toString("base64")}`;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("找不到本地图片文件");
+      throw error;
     }
-    return `data:${type};base64,${bytes.toString("base64")}`;
   }
 
   if (src.startsWith("http://") || src.startsWith("https://")) {
-    let res: Response;
     try {
-      res = await fetch(src);
+      const remote = await readRemoteImage(new URL(src));
+      return `data:${remote.type};base64,${remote.bytes.toString("base64")}`;
     } catch (e) {
       throw new Error(`无法读取图片：${(e as Error)?.message || e}`);
     }
-    if (!res.ok) throw new Error(`无法读取图片 (HTTP ${res.status})`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const type = (res.headers.get("content-type") || "image/png").split(";")[0].trim();
-    return `data:${type};base64,${buf.toString("base64")}`;
   }
 
   throw new Error("无法识别的图片格式");

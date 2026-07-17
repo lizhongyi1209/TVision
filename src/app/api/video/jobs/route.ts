@@ -8,6 +8,15 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { resolveBaseUrl } from "@/lib/o1key";
+import {
+  VIDEO_MODEL_IDS,
+  allowedVideoDurations,
+  allowedVideoResolutions,
+  buildSeedanceGenerationBody,
+  extractVideoTaskId,
+  isSeedanceModel,
+  isVideoModel,
+} from "@/lib/videoGateway";
 import type { VideoJobParams } from "@/lib/videoTypes";
 
 export const runtime = "nodejs";
@@ -15,13 +24,10 @@ export const dynamic = "force-dynamic";
 
 const ENDPOINT_IMAGE2VIDEO = "/kling/v1/videos/image2video";
 const ENDPOINT_OMNI        = "/kling/v1/videos/omni-video";
+const ENDPOINT_UNIFIED     = "/v1/video/generations";
 
 const MODE_MAP: Record<string, string>  = { "720p": "std", "1080p": "pro", "4K": "4k" };
-const MODEL_MAP: Record<string, string> = {
-  "v3":      "kling-v3",
-  "v2-6":    "kling-v2-6",
-  "v3-omni": "kling-v3-omni",
-};
+const VALID_RATIOS = new Set(["智能", "16:9", "4:3", "1:1", "3:4", "9:16", "21:9"]);
 
 export async function POST(req: Request) {
   const auth = await requireAuth();
@@ -30,21 +36,45 @@ export async function POST(req: Request) {
   if (!s.apiKey) return NextResponse.json({ error: "未设置 API 令牌" }, { status: 400 });
 
   const p = (await req.json().catch(() => ({}))) as VideoJobParams;
-  const model     = p.model    ?? "v3";
-  const mode      = p.mode     ?? "720p";
-  const duration  = Math.max(3, Math.min(15, p.duration ?? 5));
-  const prompt    = (p.prompt ?? "").trim();
-  const negPrompt = (p.negativePrompt ?? "").trim();
-  const sound     = p.sound    ?? false;
-  const imageUrl  = p.imageUrl ?? "";       // 起始帧（已上传后的 public_url）
-  const tailUrl   = p.tailUrl  ?? "";       // 尾帧（可选）
-  // 官方约束：无参考视频时图片总数（含首尾帧）+ 主体数 ≤ 7
-  const refUrls   = Array.isArray(p.refUrls) ? (p.refUrls as string[]).filter(Boolean).slice(0, 7) : [];
-  const aspectRatio = p.aspectRatio ?? "智能";
+  const rawModel  = String(p.model ?? "v3");
+  if (!isVideoModel(rawModel)) return NextResponse.json({ error: "不支持的视频模型" }, { status: 400 });
+  const model     = rawModel;
+  const modeValue = typeof p.mode === "string" ? p.mode : "720p";
+  if (!(allowedVideoResolutions(model) as readonly string[]).includes(modeValue)) {
+    return NextResponse.json({ error: `${model} 不支持 ${modeValue} 分辨率` }, { status: 400 });
+  }
+  const mode = modeValue as VideoJobParams["mode"];
+  const requestedDuration = typeof p.duration === "number" && Number.isFinite(p.duration) ? p.duration : 5;
+  if (!allowedVideoDurations(model).includes(requestedDuration)) {
+    return NextResponse.json({ error: `${model} 不支持该生成时长` }, { status: 400 });
+  }
+  const duration = requestedDuration;
+  const prompt    = typeof p.prompt === "string" ? p.prompt.trim() : "";
+  const negPrompt = typeof p.negativePrompt === "string" ? p.negativePrompt.trim() : "";
+  const sound     = p.sound === true;
+  const watermark = p.watermark === true;
+  const webSearch = p.webSearch === true;
+  const imageUrl  = typeof p.imageUrl === "string" ? p.imageUrl : "";
+  const tailUrl   = typeof p.tailUrl === "string" ? p.tailUrl : "";
+  const cleanStringArray = (value: unknown) => Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const refUrls   = cleanStringArray(p.refUrls);
+  const videoUrls = cleanStringArray(p.videoUrls);
+  const audioUrls = cleanStringArray(p.audioUrls);
+  const aspectValue = typeof p.aspectRatio === "string" ? p.aspectRatio : "智能";
+  if (!VALID_RATIOS.has(aspectValue)) {
+    return NextResponse.json({ error: "不支持的视频宽高比" }, { status: 400 });
+  }
+  const aspectRatio = aspectValue as VideoJobParams["aspectRatio"];
   // 分镜（multishot）
-  const shots = Array.isArray(p.shots) ? p.shots : [];
+  const shots = Array.isArray(p.shots)
+    ? p.shots.filter((shot) =>
+        !!shot && typeof shot.prompt === "string" && Number.isFinite(shot.duration),
+      )
+    : [];
 
-  if (!imageUrl && model !== "v3-omni") {
+  if (!imageUrl && model !== "v3-omni" && !isSeedanceModel(model)) {
     return NextResponse.json({ error: "缺少起始帧图片" }, { status: 400 });
   }
   if (!prompt && !shots.length) {
@@ -58,6 +88,15 @@ export async function POST(req: Request) {
   if (model === "v2-6" && mode === "4K") {
     return NextResponse.json({ error: "v2-6 不支持 4K 模式" }, { status: 400 });
   }
+  if (!isSeedanceModel(model) && refUrls.length > 7) {
+    return NextResponse.json({ error: "可灵参考图最多 7 张" }, { status: 400 });
+  }
+  if (isSeedanceModel(model) && shots.length) {
+    return NextResponse.json({ error: "Seedance 2.0 不支持分镜模式" }, { status: 400 });
+  }
+  if (!isSeedanceModel(model) && (videoUrls.length || audioUrls.length)) {
+    return NextResponse.json({ error: "当前模型不支持参考视频或参考音频" }, { status: 400 });
+  }
 
   const baseUrl = resolveBaseUrl(s.route);
   const headers = {
@@ -65,12 +104,37 @@ export async function POST(req: Request) {
     "Content-Type": "application/json",
   };
 
-  const modelName = MODEL_MAP[model] ?? `kling-${model}`;
+  const modelName = VIDEO_MODEL_IDS[model];
   const modeApi   = MODE_MAP[mode]   ?? "std";
   let body: Record<string, unknown>;
   let endpoint: string;
 
-  if (model === "v3-omni") {
+  if (isSeedanceModel(model)) {
+    endpoint = ENDPOINT_UNIFIED;
+    try {
+      body = buildSeedanceGenerationBody({
+        ...p,
+        model,
+        mode,
+        duration,
+        prompt,
+        negativePrompt: negPrompt,
+        sound,
+        watermark,
+        webSearch,
+        imageUrl: imageUrl || undefined,
+        tailUrl: tailUrl || undefined,
+        refUrls,
+        videoUrls,
+        audioUrls,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Seedance 参数无效" },
+        { status: 400 },
+      );
+    }
+  } else if (model === "v3-omni") {
     endpoint = ENDPOINT_OMNI;
     body = {
       model_name: modelName,
@@ -142,10 +206,7 @@ export async function POST(req: Request) {
   }
 
   // task_id 的提取（同 K3_video.py 的 create_resp 处理）
-  const taskId =
-    (payload.task_id as string) ||
-    (payload.id as string) ||
-    ((payload.data as Record<string, unknown>)?.task_id as string);
+  const taskId = extractVideoTaskId(payload);
 
   if (!taskId) {
     return NextResponse.json({ error: `API 未返回 task_id: ${JSON.stringify(payload).slice(0, 200)}` }, { status: 502 });
@@ -159,5 +220,9 @@ export async function POST(req: Request) {
     duration,
     prompt: shots.length ? "" : prompt,
     shots,
+    sound,
+    aspectRatio,
+    watermark,
+    webSearch,
   });
 }

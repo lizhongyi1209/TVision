@@ -9,12 +9,14 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { resolveBaseUrl } from "@/lib/o1key";
+import { extractGeneratedVideoUrl } from "@/lib/videoGateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUCCESS = new Set(["succeed", "success", "succeeded", "completed", "done", "finished"]);
 const FAILURE = new Set(["failed", "failure", "fail", "error", "expired", "timeout", "canceled", "cancelled", "rejected"]);
+const RUNNING = new Set(["created", "queued", "pending", "running", "processing", "in_progress", "in-progress", "submitted"]);
 
 function extractStatus(p: unknown): string {
   const asDicts = [];
@@ -27,13 +29,18 @@ function extractStatus(p: unknown): string {
       if (d.data && typeof d.data === "object") asDicts.push(d.data as Record<string, unknown>);
     }
   }
+  const found: string[] = [];
   for (const src of asDicts) {
     for (const key of ["status", "task_status", "state"]) {
       const v = src[key];
-      if (v != null && String(v).trim()) return String(v).trim().toLowerCase();
+      if (v != null && String(v).trim()) found.push(String(v).trim().toLowerCase());
     }
   }
-  return "";
+  const failure = found.find((status) => FAILURE.has(status) || status.includes("fail") || status.includes("error"));
+  if (failure) return failure;
+  const running = found.find((status) => RUNNING.has(status));
+  if (running) return running;
+  return found.find((status) => SUCCESS.has(status)) ?? found[0] ?? "";
 }
 
 function extractProgress(p: unknown): number {
@@ -51,7 +58,7 @@ function extractProgress(p: unknown): number {
     const v = src["progress"];
     if (v != null) {
       const n = parseFloat(String(v));
-      if (!isNaN(n)) return Math.max(0, Math.min(100, n > 1 ? n : n * 100));
+      if (!isNaN(n)) return Math.max(0, Math.min(100, n > 0 && n < 1 ? n * 100 : n));
     }
   }
   return 0;
@@ -137,24 +144,52 @@ export async function GET(_req: Request, ctx: { params: Promise<{ taskId: string
   const baseUrl = resolveBaseUrl(s.route);
   const headers = { Authorization: `Bearer ${s.apiKey}` };
 
-  // 尝试两个端点（先 image2video，再 omni）
+  // Seedance / 统一视频协议优先；保留 Kling 原生端点兼容已有任务。
   const endpoints = [
+    `/v1/video/generations/${encodeURIComponent(taskId)}`,
+    `/v1/tasks/${encodeURIComponent(taskId)}`,
     `/kling/v1/videos/image2video/${encodeURIComponent(taskId)}`,
     `/kling/v1/videos/omni-video/${encodeURIComponent(taskId)}`,
   ];
 
   let payload: unknown = null;
+  let retryableFailure = false;
+  let terminalError = "";
   for (const ep of endpoints) {
-    const res = await fetch(`${baseUrl}${ep}`, { headers });
+    let res: Response;
+    try {
+      res = await fetch(`${baseUrl}${ep}`, { headers, signal: AbortSignal.timeout(15_000) });
+    } catch {
+      retryableFailure = true;
+      continue;
+    }
     if (res.status === 200) {
       const text = await res.text();
-      try { payload = JSON.parse(text); } catch { /* skip */ }
+      try {
+        const candidate = JSON.parse(text);
+        const candidateStatus = extractStatus(candidate);
+        const candidateError = extractError(candidate);
+        const notFound = /not\s*found|not\s*exist|不存在|未找到/i.test(candidateError);
+        if ((candidateStatus || extractGeneratedVideoUrl(candidate)) && !notFound) payload = candidate;
+        else if (!notFound) terminalError = candidateError;
+      } catch { retryableFailure = true; }
       if (payload) break;
+      continue;
     }
+    if (res.status === 404 || res.status === 405) continue;
+    if (res.status === 429 || res.status >= 500) {
+      retryableFailure = true;
+      continue;
+    }
+    const text = await res.text().catch(() => "");
+    terminalError = `状态查询失败 HTTP ${res.status}${text ? `: ${text.slice(0, 160)}` : ""}`;
   }
 
   if (!payload) {
-    return NextResponse.json({ status: "failed", progress: 0, error: "状态查询失败" });
+    if (retryableFailure) {
+      return NextResponse.json({ status: "running", progress: 0 });
+    }
+    return NextResponse.json({ status: "failed", progress: 0, error: terminalError || "状态查询失败" });
   }
 
   const rawStatus = extractStatus(payload);
@@ -164,7 +199,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ taskId: string
     return NextResponse.json({ status: "failed", progress, error: extractError(payload) });
   }
   if (SUCCESS.has(rawStatus)) {
-    const videoUrl = extractVideoUrl(payload);
+    const videoUrl = extractGeneratedVideoUrl(payload) ?? extractVideoUrl(payload);
     if (!videoUrl) {
       return NextResponse.json({ status: "failed", progress: 100, error: "成功但未返回视频 URL" });
     }

@@ -22,11 +22,11 @@ export function BatchLightbox() {
   const openLightbox = useBatchStore((s) => s.openLightbox);
   const closeLightbox = useBatchStore((s) => s.closeLightbox);
   const retryCell = useBatchStore((s) => s.retryCell);
-  const nouns = batchNouns(wearTypeId);
 
   const cell = lightbox
     ? cells.find((c) => c.modelIndex === lightbox.modelIndex && c.garmentIndex === lightbox.garmentIndex)
     : null;
+  const nouns = batchNouns(cell?.wearTypeId ?? wearTypeId);
   const model = cell ? models[cell.modelIndex] : null;
   const garment = cell ? garments[cell.garmentIndex] : null;
   const open = !!cell?.resultUrl && !!model && !!garment;
@@ -141,7 +141,7 @@ export function BatchLightbox() {
                   <Icon name="ImageSquare" size={15} />
                   设为画布
                 </Button>
-                <Button variant="primary" onClick={() => downloadCellResult(cell.resultUrl!, garment.name, cell.modelIndex)}>
+                <Button variant="primary" onClick={() => downloadCellResult(cell.resultUrl!, garment.name, cell.modelIndex, cell.wearTypeId)}>
                   <Icon name="DownloadSimple" size={15} weight="bold" />
                   下载
                 </Button>

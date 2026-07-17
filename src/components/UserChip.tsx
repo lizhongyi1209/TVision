@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/authStore";
 import { useLogStore } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
+import { useTaskStore } from "@/lib/taskStore";
 import { QUOTA_PER_UNIT } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -17,6 +18,7 @@ import { TopupModal } from "./TopupModal";
 export function UserChip() {
   const user = useAuth((s) => s.user);
   const logout = useAuth((s) => s.logout);
+  const taskDirty = useTaskStore((s) => s.dirty);
   const openSettings = useStudio((s) => s.openSettings);
   const closeDiagPanel = useLogStore((s) => s.closePanel);
   const [open, setOpen] = useState(false);
@@ -117,8 +119,9 @@ export function UserChip() {
             <button
               type="button"
               onClick={() => {
+                if (taskDirty && !window.confirm("当前任务流程有未保存修改，确定退出登录吗？")) return;
                 setOpen(false);
-                logout();
+                void logout();
               }}
               className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-white/[0.06] hover:text-fg"
             >

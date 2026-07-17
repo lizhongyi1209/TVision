@@ -45,6 +45,9 @@ export type BatchCellStatus = "waiting" | "running" | "success" | "failed";
 export interface BatchCell {
   modelIndex: number;
   garmentIndex: number;
+  /** Task type used for this result, so later setting changes do not relabel
+   *  completed images or downloads. */
+  wearTypeId: string;
   status: BatchCellStatus;
   /** Transient engine-only flag: true from the moment a submit burst claims
    *  this cell until its POST settles, so a second pump (e.g. a retry issued
@@ -141,10 +144,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Roster edits (add is exempt — purely additive) drop any existing result
- *  grid, since re-indexing cells around a removed/replaced slot is more
+/** Destructive roster edits drop any existing result grid, since re-indexing
+ *  cells around a removed/replaced slot is more
  *  error-prone than just asking the user to re-run. D7 already disables
- *  these controls while a run is live (defensive no-op here too), so this
+ *  all roster controls while a run is live (defensive no-op here too), so this
  *  only ever fires between runs; the toast only shows when there was
  *  actually something on screen to lose. */
 function invalidateOnRosterChange(
@@ -173,6 +176,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   addModels: (srcs) => {
     const s = get();
+    if (s.runState === "running") return;
     const room = MAX_BATCH_MODELS - s.models.length;
     const accepted = srcs.slice(0, Math.max(0, room));
     if (srcs.length > accepted.length) {
@@ -192,6 +196,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   addGarments: (items) => {
     const s = get();
+    if (s.runState === "running") return;
     const room = MAX_BATCH_GARMENTS - s.garments.length;
     const accepted = items.slice(0, Math.max(0, room));
     if (items.length > accepted.length) {
@@ -236,7 +241,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     // appear to fill in row-by-row on screen.
     for (let gi = 0; gi < s.garments.length; gi++) {
       for (let mi = 0; mi < s.models.length; mi++) {
-        cells.push({ modelIndex: mi, garmentIndex: gi, status: "waiting", progress: 0 });
+        cells.push({ modelIndex: mi, garmentIndex: gi, wearTypeId: s.wearTypeId, status: "waiting", progress: 0 });
       }
     }
     const runId = s.runId + 1;
@@ -273,7 +278,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     set((s) => ({
       cells: s.cells.map((c) =>
         c.modelIndex === modelIndex && c.garmentIndex === garmentIndex
-          ? { modelIndex, garmentIndex, status: "waiting" as const, progress: 0 }
+          ? { modelIndex, garmentIndex, wearTypeId: s.wearTypeId, status: "waiting" as const, progress: 0 }
           : c,
       ),
     }));
@@ -286,7 +291,13 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     set((s) => ({
       cells: s.cells.map((c) =>
         c.status === "failed"
-          ? { modelIndex: c.modelIndex, garmentIndex: c.garmentIndex, status: "waiting" as const, progress: 0 }
+          ? {
+              modelIndex: c.modelIndex,
+              garmentIndex: c.garmentIndex,
+              wearTypeId: s.wearTypeId,
+              status: "waiting" as const,
+              progress: 0,
+            }
           : c,
       ),
     }));

@@ -61,6 +61,7 @@ export function Stage() {
   const inpaintMask = useStudio((s) => s.inpaintMask);
   const openBrushPanel = useStudio((s) => s.openBrushPanel);
   const clearInpaint = useStudio((s) => s.clearInpaint);
+  const cancelAction = useStudio((s) => s.cancelAction);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -210,21 +211,22 @@ export function Stage() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openBrushPanel();
+                      openBrushPanel(true);
                     }}
                     className="glass flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-fg hover:border-line-2"
                   >
-                    <Icon name="PaintBrush" size={13} />
+                    <Icon name={action?.usesBrush ? action.icon : "PaintBrush"} size={13} />
                     重新涂抹
                   </button>
                   <button
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      clearInpaint();
+                      if (action?.usesBrush) cancelAction();
+                      else clearInpaint();
                     }}
                     className="glass flex h-8 items-center gap-1.5 rounded-full px-3 text-xs text-fg-dim hover:text-fg"
-                    aria-label="取消局部重绘"
+                    aria-label={action?.usesBrush ? `取消${action.label}` : "取消局部重绘"}
                   >
                     <Icon name="X" size={13} />
                     取消

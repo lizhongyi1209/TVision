@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { requireAuth } from "@/lib/auth";
+import { canAccessWorkflowAsset, isWorkflowScopedAsset } from "@/lib/workflowAssets.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +18,11 @@ const TYPES: Record<string, string> = {
 
 // Stream a generated image from /output. Path is basename-sanitized to prevent traversal.
 export async function GET(_req: Request, ctx: { params: Promise<{ name: string }> }) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
+  if (!canAccessWorkflowAsset(safe, auth.uid)) return new Response("Not found", { status: 404 });
   const ext = path.extname(safe).toLowerCase();
   const type = TYPES[ext];
   if (!type) return new Response("Not found", { status: 404 });
@@ -27,7 +30,12 @@ export async function GET(_req: Request, ctx: { params: Promise<{ name: string }
   try {
     const buf = await fs.readFile(path.join(OUTPUT_DIR, safe));
     return new Response(new Uint8Array(buf), {
-      headers: { "Content-Type": type, "Cache-Control": "public, max-age=31536000, immutable" },
+      headers: {
+        "Content-Type": type,
+        "Cache-Control": isWorkflowScopedAsset(safe)
+          ? "private, max-age=31536000, immutable"
+          : "public, max-age=31536000, immutable",
+      },
     });
   } catch {
     return new Response("Not found", { status: 404 });
@@ -48,9 +56,13 @@ async function findExisting(base: string): Promise<string | null> {
 
 // Replace an existing job's output with the frontend-composited full image after local inpaint, so history shows the complete result instead of the cropped patch.
 export async function PUT(req: Request, ctx: { params: Promise<{ name: string }> }) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
+  if (!canAccessWorkflowAsset(safe, auth.uid)) {
+    return NextResponse.json({ ok: false, error: "对应的历史文件不存在" }, { status: 404 });
+  }
   if (!/^[\w.-]+\.png$/i.test(safe)) {
     return NextResponse.json({ ok: false, error: "文件名不合法" }, { status: 400 });
   }

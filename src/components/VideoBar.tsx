@@ -7,35 +7,35 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useVideoStore } from "@/lib/videoStore";
-import type { KlingModel, KlingMode, AspectRatio, ShotSegment } from "@/lib/videoTypes";
+import {
+  allowedVideoDurations,
+  allowedVideoResolutions,
+  isSeedanceModel,
+  supportsShots,
+} from "@/lib/videoGateway";
+import type { AspectRatio, ShotSegment, VideoModel, VideoResolution } from "@/lib/videoTypes";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
-import { Button, Select, Segmented } from "./ui";
+import { Button, Select } from "./ui";
 
-const MODELS: { value: KlingModel; label: string; hint: string }[] = [
+const MODELS: { value: VideoModel; label: string; hint: string }[] = [
   { value: "v3",      label: "可灵 v3",      hint: "图生视频 · 3~15s · 支持 4K" },
   { value: "v2-6",    label: "可灵 v2.6",    hint: "图生视频 · 5/10s · 性价比" },
   { value: "v3-omni", label: "可灵 v3-omni", hint: "多模态 · 参考图/视频" },
+  { value: "seedance-2.0", label: "Seedance 2.0", hint: "多模态 · 有声 · 最高 4K" },
+  { value: "seedance-2.0-fast", label: "Seedance 2.0 Fast", hint: "多模态 · 快速 · 最高 720p" },
 ];
 
-const MODES_V3: { value: KlingMode; label: string }[] = [
-  { value: "720p",   label: "720p" },
-  { value: "1080p",  label: "1080p" },
-  { value: "4K",     label: "4K" },
-];
-const MODES_V26: { value: KlingMode; label: string }[] = [
-  { value: "720p",   label: "720p" },
-  { value: "1080p",  label: "1080p" },
-];
-
-const DURATIONS_V3   = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-const DURATIONS_V26  = [5, 10];
-const ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
+const SEEDANCE_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: "智能",  label: "智能" },
   { value: "16:9",  label: "16:9" },
-  { value: "9:16",  label: "9:16" },
+  { value: "4:3",   label: "4:3" },
   { value: "1:1",   label: "1:1" },
+  { value: "3:4",   label: "3:4" },
+  { value: "9:16",  label: "9:16" },
+  { value: "21:9",  label: "21:9" },
 ];
+const OMNI_RATIOS = SEEDANCE_RATIOS.filter((option) => ["智能", "16:9", "9:16", "1:1"].includes(option.value));
 
 // ── 分镜编辑器 ────────────────────────────────────────────────────────────────
 
@@ -120,6 +120,8 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
   const prompt       = useVideoStore((s) => s.prompt);
   const negPrompt    = useVideoStore((s) => s.negativePrompt);
   const sound        = useVideoStore((s) => s.sound);
+  const watermark    = useVideoStore((s) => s.watermark);
+  const webSearch    = useVideoStore((s) => s.webSearch);
   const aspectRatio  = useVideoStore((s) => s.aspectRatio);
   const shotsEnabled = useVideoStore((s) => s.shotsEnabled);
 
@@ -129,13 +131,16 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
   const setPrompt      = useVideoStore((s) => s.setPrompt);
   const setNegPrompt   = useVideoStore((s) => s.setNegPrompt);
   const setSound       = useVideoStore((s) => s.setSound);
+  const setWatermark   = useVideoStore((s) => s.setWatermark);
+  const setWebSearch   = useVideoStore((s) => s.setWebSearch);
   const setAspectRatio = useVideoStore((s) => s.setAspectRatio);
   const toggleShots    = useVideoStore((s) => s.toggleShots);
 
-  const isV26    = model === "v2-6";
   const isOmni   = model === "v3-omni";
-  const modeOpts = isV26 ? MODES_V26 : MODES_V3;
-  const durOpts  = isV26 ? DURATIONS_V26 : DURATIONS_V3;
+  const isSeedance = isSeedanceModel(model);
+  const modeOpts = allowedVideoResolutions(model).map((value) => ({ value, label: value }));
+  const durOpts = allowedVideoDurations(model);
+  const ratioOpts = isSeedance ? SEEDANCE_RATIOS : OMNI_RATIOS;
 
   const [showNeg, setShowNeg] = useState(false);
 
@@ -145,8 +150,9 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 260, damping: 28 }}
-        className="glass pointer-events-auto w-[min(960px,96vw)] rounded-panel p-3.5"
+        className="glass pointer-events-auto max-h-[calc(100vh-1rem)] w-[min(960px,96vw)] overflow-y-auto rounded-panel p-3.5"
       >
+        <fieldset disabled={busy} className="contents">
         {/* 芯片行：模型标识 + 参数选择器 */}
         <div className="mb-2.5 flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] py-1 pl-2 pr-3 text-sm">
@@ -159,15 +165,15 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
           {/* 模型 */}
           <Select
             value={model}
-            onChange={(v) => setModel(v as KlingModel)}
+            onChange={(v) => setModel(v as VideoModel)}
             options={MODELS.map((m) => ({ value: m.value, label: m.label, hint: m.hint }))}
-            className="w-[160px]"
+            className="w-[178px]"
           />
 
           {/* 画质 */}
           <Select
             value={mode}
-            onChange={(v) => setMode(v as KlingMode)}
+            onChange={(v) => setMode(v as VideoResolution)}
             options={modeOpts}
             className="w-[88px]"
           />
@@ -176,16 +182,16 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
           <Select
             value={String(duration)}
             onChange={(v) => setDuration(Number(v))}
-            options={durOpts.map((d) => ({ value: String(d), label: `${d}s` }))}
-            className="w-[72px]"
+            options={durOpts.map((d) => ({ value: String(d), label: d === -1 ? "自动" : `${d}s` }))}
+            className="w-[76px]"
           />
 
-          {/* 宽高比（omni 专有） */}
-          {isOmni && (
+          {/* 宽高比（多模态模型） */}
+          {(isOmni || isSeedance) && (
             <Select
               value={aspectRatio}
               onChange={(v) => setAspectRatio(v as AspectRatio)}
-              options={ASPECT_RATIOS}
+              options={ratioOpts}
               className="w-[84px]"
             />
           )}
@@ -203,8 +209,35 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
             <Icon name={sound ? "SpeakerHigh" : "SpeakerX"} size={14} />
           </button>
 
+          {isSeedance && (
+            <>
+              <button
+                type="button"
+                onClick={() => setWebSearch(!webSearch)}
+                title={webSearch ? "联网搜索已开启" : "开启联网搜索"}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-control border transition-colors",
+                  webSearch ? "border-accent/60 bg-accent/10 text-accent" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
+                )}
+              >
+                <Icon name="Globe" size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setWatermark(!watermark)}
+                title={watermark ? "AI 水印已开启" : "添加 AI 水印"}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-control border transition-colors",
+                  watermark ? "border-accent/60 bg-accent/10 text-accent" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
+                )}
+              >
+                <Icon name="Sparkle" size={14} />
+              </button>
+            </>
+          )}
+
           {/* 分镜（v2-6 不支持分镜） */}
-          {!isV26 && (
+          {supportsShots(model) && (
             <button
               type="button"
               onClick={toggleShots}
@@ -276,8 +309,8 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
             )}
           </Button>
         </div>
+        </fieldset>
       </motion.div>
     </div>
   );
 }
-

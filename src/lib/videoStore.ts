@@ -5,7 +5,14 @@
 // 单独拆出来，VideoWorkshop 卸载时后台轮询不受影响（引用 store 而不是 React state）。
 
 import { create } from "zustand";
-import type { KlingModel, KlingMode, AspectRatio, ShotSegment, VideoHistoryItem } from "./videoTypes";
+import {
+  allowedVideoDurations,
+  allowedVideoResolutions,
+  isSeedanceModel,
+  maxReferenceImages,
+  supportsShots,
+} from "./videoGateway";
+import type { AspectRatio, ShotSegment, VideoHistoryItem, VideoModel, VideoResolution } from "./videoTypes";
 
 export type VideoPhase = "idle" | "uploading" | "submitting" | "running" | "success" | "error";
 
@@ -13,19 +20,28 @@ export type VideoPhase = "idle" | "uploading" | "submitting" | "running" | "succ
  *  frames=首尾帧（first_frame/end_frame）。v3 / v2-6 只有首尾帧一种，忽略此值。 */
 export type FrameMode = "refs" | "frames";
 
-const DEFAULT_MODEL: KlingModel   = "v3";
-const DEFAULT_MODE: KlingMode     = "720p";
+export type LocalImageAsset = { previewUrl: string; file: File };
+export type LocalVideoAsset = { previewUrl: string; file: File; duration: number | null };
+
+function revokePreview(url: string | undefined) {
+  if (url && typeof URL !== "undefined") URL.revokeObjectURL(url);
+}
+
+const DEFAULT_MODEL: VideoModel = "v3";
+const DEFAULT_MODE: VideoResolution = "720p";
 // frameMode 初始为 "refs"（多图参考），宽高比默认须与之配套（智能会被拦截）
 const DEFAULT_RATIO: AspectRatio  = "9:16";
 
 export interface VideoState {
   // ── 参数 ──────────────────────────────────────────────────────────
-  model:          KlingModel;
-  mode:           KlingMode;
+  model:          VideoModel;
+  mode:           VideoResolution;
   duration:       number;        // 秒，3-15
   prompt:         string;
   negativePrompt: string;
   sound:          boolean;
+  watermark:      boolean;
+  webSearch:      boolean;
   aspectRatio:    AspectRatio;
   // 多段分镜
   shotsEnabled:   boolean;
@@ -34,11 +50,15 @@ export interface VideoState {
   /** v3-omni 图片输入方式（refs 默认；v3/v2-6 恒为 frames 语义）。 */
   frameMode:      FrameMode;
   /** 起始帧：{ dataUrl, file } */
-  startFrame:     { dataUrl: string; file: File } | null;
+  startFrame:     LocalImageAsset | null;
   /** 尾帧（可选）*/
-  tailFrame:      { dataUrl: string; file: File } | null;
+  tailFrame:      LocalImageAsset | null;
   /** v3-omni 多图参考（官方约束：无参考视频时图片总数 ≤7）*/
-  refImages:      { dataUrl: string; file: File }[];
+  refImages:      LocalImageAsset[];
+  /** Seedance 多模态参考视频（最多 3 个）。 */
+  refVideos:      LocalVideoAsset[];
+  /** Seedance 多模态参考音频（最多 3 段）。 */
+  refAudios:      LocalVideoAsset[];
 
   // ── 任务状态 ──────────────────────────────────────────────────────
   phase:          VideoPhase;
@@ -56,20 +76,27 @@ export interface VideoState {
   // 历史记录塞回播放器状态。
 
   // ── Actions ───────────────────────────────────────────────────────
-  setModel:        (m: KlingModel) => void;
-  setMode:         (m: KlingMode) => void;
+  setModel:        (m: VideoModel) => void;
+  setMode:         (m: VideoResolution) => void;
   setDuration:     (n: number) => void;
   setPrompt:       (s: string) => void;
   setNegPrompt:    (s: string) => void;
   setSound:        (b: boolean) => void;
+  setWatermark:    (b: boolean) => void;
+  setWebSearch:    (b: boolean) => void;
   setAspectRatio:  (r: AspectRatio) => void;
   toggleShots:     () => void;
   setShots:        (shots: ShotSegment[]) => void;
   setFrameMode:    (m: FrameMode) => void;
-  setStartFrame:   (f: { dataUrl: string; file: File } | null) => void;
-  setTailFrame:    (f: { dataUrl: string; file: File } | null) => void;
-  addRefImage:     (f: { dataUrl: string; file: File }) => void;
+  setStartFrame:   (f: LocalImageAsset | null) => void;
+  setTailFrame:    (f: LocalImageAsset | null) => void;
+  addRefImage:     (f: LocalImageAsset) => string | null;
   removeRefImage:  (index: number) => void;
+  addRefVideo:     (f: LocalVideoAsset) => string | null;
+  removeRefVideo:  (index: number) => void;
+  addRefAudio:     (f: LocalVideoAsset) => string | null;
+  removeRefAudio:  (index: number) => void;
+  clearMediaInputs: () => void;
 
   beginUpload:     () => void;
   beginSubmit:     () => void;
@@ -81,13 +108,15 @@ export interface VideoState {
   playHistory:     (item: VideoHistoryItem) => void;
 }
 
-export const useVideoStore = create<VideoState>((set) => ({
+export const useVideoStore = create<VideoState>((set, get) => ({
   model:          DEFAULT_MODEL,
   mode:           DEFAULT_MODE,
   duration:       5,
   prompt:         "",
   negativePrompt: "",
   sound:          false,
+  watermark:      false,
+  webSearch:      false,
   aspectRatio:    DEFAULT_RATIO,
   shotsEnabled:   false,
   shots:          [],
@@ -95,6 +124,8 @@ export const useVideoStore = create<VideoState>((set) => ({
   startFrame:     null,
   tailFrame:      null,
   refImages:      [],
+  refVideos:      [],
+  refAudios:      [],
 
   phase:    "idle",
   progress: 0,
@@ -105,18 +136,30 @@ export const useVideoStore = create<VideoState>((set) => ({
 
   setModel:       (m) => set((s) => ({
     model: m,
-    // v2-6 只支持 5/10s 和 720p/1080p
-    duration: m === "v2-6" && ![5, 10].includes(s.duration) ? 5 : s.duration,
-    mode:     m === "v2-6" && s.mode === "4K" ? "1080p" : s.mode,
-    shotsEnabled: m === "v2-6" && s.shotsEnabled ? false : s.shotsEnabled,
+    duration: allowedVideoDurations(m).includes(s.duration) ? s.duration : 5,
+    mode: allowedVideoResolutions(m).includes(s.mode) ? s.mode : "720p",
+    shotsEnabled: supportsShots(m) ? s.shotsEnabled : false,
+    aspectRatio: isSeedanceModel(m) && !isSeedanceModel(s.model)
+      ? "智能"
+      : m === "v3-omni" && !["智能", "16:9", "9:16", "1:1"].includes(s.aspectRatio)
+        ? "9:16"
+        : s.aspectRatio,
+    refImages: (() => {
+      const max = maxReferenceImages(m);
+      s.refImages.slice(max).forEach((item) => revokePreview(item.previewUrl));
+      return s.refImages.slice(0, max);
+    })(),
   })),
   setMode:        (m) => set({ mode: m }),
   setDuration:    (n) => set({ duration: n }),
   setPrompt:      (s) => set({ prompt: s }),
   setNegPrompt:   (s) => set({ negativePrompt: s }),
   setSound:       (b) => set({ sound: b }),
+  setWatermark:   (b) => set({ watermark: b }),
+  setWebSearch:   (b) => set({ webSearch: b }),
   setAspectRatio: (r) => set({ aspectRatio: r }),
   toggleShots:    () => set((s) => {
+    if (!supportsShots(s.model)) return { shotsEnabled: false };
     const next = !s.shotsEnabled;
     const defaultShots: ShotSegment[] =
       next && !s.shots.length
@@ -128,11 +171,58 @@ export const useVideoStore = create<VideoState>((set) => ({
   setShots:       (shots) => set({ shots }),
   // 切输入方式时联动宽高比默认值：多图参考无首帧可推断 →「智能」必报错，
   // 给个明确默认 9:16（竖版电商/短视频最常用）；首尾帧回到「智能」跟随首帧。
-  setFrameMode:   (m) => set({ frameMode: m, aspectRatio: m === "refs" ? "9:16" : "智能" }),
-  setStartFrame:  (f) => set({ startFrame: f }),
-  setTailFrame:   (f) => set({ tailFrame: f }),
-  addRefImage:    (f) => set((s) => ({ refImages: [...s.refImages, f].slice(0, 7) })),
-  removeRefImage: (i) => set((s) => ({ refImages: s.refImages.filter((_, idx) => idx !== i) })),
+  setFrameMode:   (m) => set((s) => ({
+    frameMode: m,
+    aspectRatio: m === "refs" && !isSeedanceModel(s.model) ? "9:16" : "智能",
+  })),
+  setStartFrame:  (f) => set((s) => {
+    if (s.startFrame?.previewUrl !== f?.previewUrl) revokePreview(s.startFrame?.previewUrl);
+    return { startFrame: f };
+  }),
+  setTailFrame:   (f) => set((s) => {
+    if (s.tailFrame?.previewUrl !== f?.previewUrl) revokePreview(s.tailFrame?.previewUrl);
+    return { tailFrame: f };
+  }),
+  addRefImage:    (f) => {
+    const state = get();
+    if (state.refImages.length >= maxReferenceImages(state.model)) return `参考图最多 ${maxReferenceImages(state.model)} 张`;
+    set({ refImages: [...state.refImages, f] });
+    return null;
+  },
+  removeRefImage: (i) => set((s) => {
+    revokePreview(s.refImages[i]?.previewUrl);
+    return { refImages: s.refImages.filter((_, idx) => idx !== i) };
+  }),
+  addRefVideo:    (f) => {
+    const state = get();
+    if (state.refVideos.length >= 3) return "参考视频最多 3 个";
+    const total = [...state.refVideos, f].reduce((sum, item) => sum + (item.duration ?? 0), 0);
+    if (total > 15.05) return "所有参考视频总时长不能超过 15 秒";
+    set({ refVideos: [...state.refVideos, f] });
+    return null;
+  },
+  removeRefVideo: (i) => set((s) => {
+    revokePreview(s.refVideos[i]?.previewUrl);
+    return { refVideos: s.refVideos.filter((_, idx) => idx !== i) };
+  }),
+  addRefAudio:    (f) => {
+    const state = get();
+    if (state.refAudios.length >= 3) return "参考音频最多 3 段";
+    const total = [...state.refAudios, f].reduce((sum, item) => sum + (item.duration ?? 0), 0);
+    if (total > 15.05) return "所有参考音频总时长不能超过 15 秒";
+    set({ refAudios: [...state.refAudios, f] });
+    return null;
+  },
+  removeRefAudio: (i) => set((s) => {
+    revokePreview(s.refAudios[i]?.previewUrl);
+    return { refAudios: s.refAudios.filter((_, idx) => idx !== i) };
+  }),
+  clearMediaInputs: () => set((s) => {
+    revokePreview(s.startFrame?.previewUrl);
+    revokePreview(s.tailFrame?.previewUrl);
+    [...s.refImages, ...s.refVideos, ...s.refAudios].forEach((item) => revokePreview(item.previewUrl));
+    return { startFrame: null, tailFrame: null, refImages: [], refVideos: [], refAudios: [] };
+  }),
 
   beginUpload:  () => set({ phase: "uploading", progress: 0, error: null, videoUrl: null, blobUrl: null }),
   beginSubmit:  () => set({ phase: "submitting", progress: 0 }),

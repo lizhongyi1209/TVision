@@ -19,19 +19,17 @@ function pos(i: number, n: number) {
   return { x: Math.cos(ang) * radius, y: Math.sin(ang) * radius };
 }
 
-// Local quick tools (left fan). AI actions from lib/actions fan out on the
-// right — except 视觉反推, which sits on the left alongside 裁剪/局部重绘
-// (2026-07-12 user request): it's still a StudioAction (goes through
-// chooseAction, keeps its async vision-analysis flow), just rendered in the
-// left fan instead of the right one.
+// Local quick tools (left fan). Most AI actions from lib/actions fan out on the
+// right; selection-driven actions such as 物品移除 and 视觉反推 sit alongside
+// the local tools while still going through chooseAction.
 const TOOLS = [
   { id: "crop", label: "裁剪", hint: "裁剪画布图片（默认 1:1）", icon: "Crop" },
   { id: "brush", label: "局部重绘", hint: "涂抹要修改的区域，仅重绘该区域", icon: "PaintBrush" },
   { id: "sticker", label: "贴图", hint: "叠加另一张图片，可移动/缩放/旋转", icon: "Sticker" },
 ];
 
-// Two fans around the clicked image: quick edit tools (+ 视觉反推) on the
-// left, generation actions on the right.
+// Two fans around the clicked image: quick edit tools and selection-driven AI
+// actions on the left, generation actions on the right.
 export function RadialMenu() {
   const choose = useStudio((s) => s.chooseAction);
   const openCrop = useStudio((s) => s.openCrop);
@@ -39,20 +37,27 @@ export function RadialMenu() {
   const openSticker = useStudio((s) => s.openSticker);
   const reduce = useReducedMotion();
 
-  // 视觉反推 is pulled out of ACTIONS (right fan) and appended to the left
-  // fan's item list below — same click target (chooseAction) as any other
-  // action, just placed on the other side visually.
+  // 物品移除 belongs next to 局部重绘 because both begin with a painted
+  // selection. 视觉反推 remains the final left-side item.
+  const removeAction = ACTIONS.find((a) => a.id === "remove-object");
   const reverseAction = ACTIONS.find((a) => a.id === "reverse-prompt");
-  const rightActions = ACTIONS.filter((a) => a.id !== "reverse-prompt");
-  const leftItems = reverseAction
-    ? [...TOOLS, { id: reverseAction.id, label: reverseAction.label, hint: reverseAction.hint, icon: reverseAction.icon }]
-    : TOOLS;
+  const rightActions = ACTIONS.filter((a) => a.id !== "remove-object" && a.id !== "reverse-prompt");
+  const leftItems = [
+    ...TOOLS.slice(0, 2),
+    ...(removeAction
+      ? [{ id: removeAction.id, label: removeAction.label, hint: removeAction.hint, icon: removeAction.icon }]
+      : []),
+    ...TOOLS.slice(2),
+    ...(reverseAction
+      ? [{ id: reverseAction.id, label: reverseAction.label, hint: reverseAction.hint, icon: reverseAction.icon }]
+      : []),
+  ];
 
   function onLeftItem(id: string) {
     if (id === "crop") openCrop();
     else if (id === "brush") openBrushPanel();
     else if (id === "sticker") openSticker();
-    else choose(id); // 视觉反推 (and any future non-tool item placed on the left)
+    else choose(id); // Selection-driven StudioAction placed on the left.
   }
 
   const container: Variants = {

@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TVision · 任务模式设计预览</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #0b0b0c;
+        --ink-2: #101013;
+        --panel: #141416;
+        --panel-2: #1a1a1e;
+        --panel-3: #202024;
+        --line: rgba(255, 255, 255, 0.08);
+        --line-2: rgba(255, 255, 255, 0.14);
+        --fg: #f5f4f2;
+        --dim: #a7a5a9;
+        --mute: #6e6c71;
+        --accent: #e6b277;
+        --accent-2: #f2c48d;
+        --green: #77c49a;
+        --red: #e78888;
+        --blue: #81a9d8;
+        --violet: #b8a2d8;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body { height: 100%; }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background: var(--ink);
+        color: var(--fg);
+        font-family: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", sans-serif;
+        font-size: 13px;
+        letter-spacing: 0;
+      }
+
+      button, input, textarea { font: inherit; letter-spacing: 0; }
+      button { color: inherit; }
+
+      .app {
+        min-width: 1120px;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background:
+          radial-gradient(circle at 18% -10%, rgba(230, 178, 119, 0.07), transparent 29%),
+          var(--ink);
+      }
+
+      .topbar {
+        height: 56px;
+        flex: 0 0 56px;
+        display: grid;
+        grid-template-columns: 230px 1fr 230px;
+        align-items: center;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(11, 11, 12, 0.92);
+        position: relative;
+        z-index: 20;
+      }
+
+      .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+      .brand-mark {
+        width: 24px;
+        height: 24px;
+        position: relative;
+        display: grid;
+        place-items: center;
+        color: var(--accent);
+      }
+
+      .brand-mark::before,
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        border: 1.5px solid currentColor;
+        border-radius: 50%;
+      }
+
+      .brand-mark::before { width: 15px; height: 15px; }
+      .brand-mark::after { width: 5px; height: 5px; background: currentColor; }
+      .brand-name { font-weight: 680; }
+      .brand-sub { margin-left: 2px; color: var(--mute); font-size: 11px; }
+
+      .nav {
+        justify-self: center;
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel-2);
+      }
+
+      .nav button {
+        border: 0;
+        background: transparent;
+        height: 30px;
+        padding: 0 11px;
+        border-radius: 999px;
+        color: var(--dim);
+        cursor: default;
+        white-space: nowrap;
+      }
+
+      .nav button.active { background: var(--accent); color: var(--ink); font-weight: 650; }
+
+      .user-tools { justify-self: end; display: flex; align-items: center; gap: 7px; }
+      .icon-btn, .mini-icon {
+        border: 0;
+        background: transparent;
+        display: inline-grid;
+        place-items: center;
+        cursor: pointer;
+        transition: 150ms ease;
+      }
+
+      .icon-btn {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        color: var(--dim);
+      }
+
+      .icon-btn:hover { color: var(--fg); background: rgba(255, 255, 255, 0.05); }
+
+      .avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(145deg, #dbad77, #8f6c49);
+        color: #18120d;
+        font-size: 11px;
+        font-weight: 800;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      }
+
+      .workspace {
+        min-height: 0;
+        flex: 1;
+        display: grid;
+        grid-template-columns: 232px minmax(520px, 1fr) 342px;
+      }
+
+      .sidebar {
+        min-width: 0;
+        border-right: 1px solid var(--line);
+        background: rgba(16, 16, 19, 0.87);
+        display: flex;
+        flex-direction: column;
+        padding: 14px 12px 12px;
+      }
+
+      .side-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 12px; }
+      .side-title { font-weight: 650; font-size: 14px; }
+
+      .square-add {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--line-2);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--dim);
+        cursor: pointer;
+      }
+
+      .square-add:hover { border-color: rgba(230, 178, 119, 0.55); color: var(--accent); }
+
+      .side-label {
+        margin: 12px 6px 7px;
+        color: var(--mute);
+        font-size: 10px;
+        font-weight: 650;
+      }
+
+      .flow-list { display: flex; flex-direction: column; gap: 3px; }
+
+      .flow-item {
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .flow-item:hover { background: rgba(255, 255, 255, 0.035); }
+      .flow-item.active { border-color: rgba(230, 178, 119, 0.25); background: rgba(230, 178, 119, 0.08); }
+
+      .flow-glyph {
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--line);
+        color: var(--dim);
+        font-weight: 700;
+      }
+
+      .flow-item.active .flow-glyph { color: var(--accent); border-color: rgba(230, 178, 119, 0.3); }
+      .flow-copy { min-width: 0; }
+      .flow-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+      .flow-meta { margin-top: 3px; color: var(--mute); font-size: 10px; }
+      .flow-menu { color: var(--mute); }
+
+      .side-spacer { flex: 1; }
+
+      .node-library {
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+      }
+
+      .library-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+      .library-item {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: rgba(255, 255, 255, 0.025);
+        padding: 8px 7px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--dim);
+        cursor: grab;
+      }
+
+      .library-item:hover { border-color: var(--line-2); color: var(--fg); }
+      .node-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+      .dot-image { background: var(--blue); }
+      .dot-text { background: var(--violet); }
+      .dot-ai { background: var(--accent); }
+      .dot-output { background: var(--green); }
+
+      .canvas-shell {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.023) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.023) 1px, transparent 1px),
+          #0d0d0f;
+        background-size: 24px 24px;
+      }
+
+      .flow-toolbar {
+        height: 62px;
+        flex: 0 0 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 18px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(13, 13, 15, 0.86);
+        backdrop-filter: blur(12px);
+      }
+
+      .flow-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .flow-title { font-size: 15px; font-weight: 680; white-space: nowrap; }
+      .status-ok {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 24px;
+        padding: 0 8px;
+        border-radius: 999px;
+        color: var(--green);
+        background: rgba(119, 196, 154, 0.08);
+        border: 1px solid rgba(119, 196, 154, 0.2);
+        font-size: 10px;
+      }
+
+      .toolbar-actions { display: flex; align-items: center; gap: 7px; }
+      .tool-segment { display: flex; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+      .tool-segment button {
+        height: 28px;
+        border: 0;
+        border-radius: 5px;
+        padding: 0 10px;
+        background: transparent;
+        color: var(--mute);
+        cursor: pointer;
+      }
+      .tool-segment button.active { color: var(--fg); background: rgba(255, 255, 255, 0.07); }
+
+      .ghost-btn, .primary-btn {
+        height: 34px;
+        border-radius: 7px;
+        padding: 0 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        cursor: pointer;
+        font-weight: 630;
+      }
+
+      .ghost-btn { border: 1px solid var(--line-2); background: rgba(255, 255, 255, 0.025); color: var(--dim); }
+      .ghost-btn:hover { color: var(--fg); background: rgba(255, 255, 255, 0.05); }
+      .primary-btn { border: 0; background: var(--accent); color: var(--ink); box-shadow: 0 8px 26px rgba(230, 178, 119, 0.16); }
+      .primary-btn:hover { background: var(--accent-2); }
+
+      .flow-scroll {
+        min-height: 0;
+        flex: 1;
+        overflow: auto;
+        padding: 20px 36px 58px;
+      }
+
+      .flow-column { width: min(680px, 100%); margin: 0 auto; position: relative; }
+
+      .step-card {
+        position: relative;
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 11px;
+        align-items: start;
+        min-height: 76px;
+        padding: 10px 12px 10px 10px;
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)), var(--panel);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        cursor: pointer;
+        transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+      }
+
+      .step-card:hover { transform: translateY(-1px); border-color: rgba(255, 255, 255, 0.2); }
+      .step-card.selected { border-color: rgba(230, 178, 119, 0.7); box-shadow: 0 0 0 1px rgba(230, 178, 119, 0.12), 0 20px 50px rgba(0, 0, 0, 0.3); }
+
+      .step-index {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 750;
+      }
+
+      .step-card.selected .step-index { color: var(--ink); background: var(--accent); border-color: var(--accent); }
+      .step-main { min-width: 0; }
+      .step-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+      .step-name { font-size: 13px; font-weight: 680; }
+      .step-kind { color: var(--mute); font-size: 10px; }
+      .drag-handle { color: #4d4c50; letter-spacing: 1px; }
+      .step-summary { margin-top: 4px; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .mapping-row { margin-top: 7px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+      .token {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 23px;
+        max-width: 220px;
+        padding: 0 8px;
+        border-radius: 5px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--dim);
+        font-size: 10px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .token.text { color: #cbbce1; border-color: rgba(184, 162, 216, 0.22); background: rgba(184, 162, 216, 0.07); }
+      .token.image { color: #b5cee9; border-color: rgba(129, 169, 216, 0.22); background: rgba(129, 169, 216, 0.07); }
+      .token.output { color: #a9ddbd; border-color: rgba(119, 196, 154, 0.22); background: rgba(119, 196, 154, 0.07); }
+      .arrow { color: var(--mute); }
+      .step-state { padding-top: 2px; color: var(--mute); font-size: 11px; display: flex; align-items: center; gap: 6px; }
+      .state-dot { width: 7px; height: 7px; border-radius: 50%; background: #55545a; }
+      .state-dot.ok { background: var(--green); box-shadow: 0 0 0 3px rgba(119, 196, 154, 0.1); }
+      .state-dot.running { background: var(--accent); box-shadow: 0 0 0 4px rgba(230, 178, 119, 0.1); }
+
+      .connector { height: 22px; position: relative; display: grid; place-items: center; }
+      .connector::before { content: ""; width: 1px; height: 100%; background: linear-gradient(var(--line-2), rgba(230, 178, 119, 0.25), var(--line-2)); }
+      .insert-step {
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line-2);
+        background: var(--panel-2);
+        color: var(--mute);
+        opacity: 0;
+        cursor: pointer;
+        transition: opacity 120ms ease, color 120ms ease;
+      }
+      .connector:hover .insert-step { opacity: 1; color: var(--accent); }
+
+      .input-thumbs { display: flex; gap: 5px; margin-top: 6px; }
+      .mini-photo {
+        width: 38px;
+        height: 38px;
+        border-radius: 6px;
+        overflow: hidden;
+        border: 1px solid var(--line-2);
+        position: relative;
+        background: #26262a;
+      }
+
+      .mini-photo.person {
+        background:
+          radial-gradient(circle at 50% 26%, #d8a97e 0 9%, transparent 10%),
+          radial-gradient(ellipse at 50% 84%, #61728b 0 28%, transparent 29%),
+          linear-gradient(145deg, #39404b, #17181c);
+      }
+      .mini-photo.garment {
+        background:
+          linear-gradient(110deg, transparent 29%, #c7c0b5 30% 39%, transparent 40%),
+          linear-gradient(250deg, transparent 29%, #c7c0b5 30% 39%, transparent 40%),
+          linear-gradient(90deg, transparent 31%, #c7c0b5 32% 68%, transparent 69%),
+          linear-gradient(145deg, #3c3d42, #19191d);
+      }
+
+      .inspector {
+        min-width: 0;
+        border-left: 1px solid var(--line);
+        background: rgba(20, 20, 22, 0.94);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .inspector-head {
+        height: 62px;
+        flex: 0 0 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-title { font-size: 14px; font-weight: 680; }
+      .inspector-sub { color: var(--mute); font-size: 10px; margin-top: 3px; }
+      .toggle { width: 34px; height: 18px; border-radius: 999px; background: rgba(230, 178, 119, 0.32); position: relative; }
+      .toggle::after { content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%; top: 2px; right: 2px; background: var(--accent); }
+
+      .inspector-scroll { min-height: 0; flex: 1; overflow: auto; padding: 15px 15px 24px; }
+      .section { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+      .section:last-child { border-bottom: 0; }
+      .section-title { margin-bottom: 10px; color: var(--dim); font-size: 11px; font-weight: 680; }
+      .field { margin-bottom: 11px; }
+      .field:last-child { margin-bottom: 0; }
+      .label { margin-bottom: 6px; color: var(--mute); font-size: 10px; }
+
+      .select-like, .text-input {
+        min-height: 38px;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-2);
+        color: var(--fg);
+      }
+
+      .select-like { padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .select-value { min-width: 0; display: flex; align-items: center; gap: 7px; }
+      .caret { color: var(--mute); }
+
+      .template-box {
+        min-height: 142px;
+        border: 1px solid rgba(230, 178, 119, 0.24);
+        border-radius: 7px;
+        background: #111114;
+        padding: 10px;
+        color: var(--dim);
+        line-height: 1.7;
+      }
+
+      .inline-token {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        margin: 2px 1px;
+        padding: 0 7px;
+        border-radius: 5px;
+        color: #cbbce1;
+        background: rgba(184, 162, 216, 0.1);
+        border: 1px solid rgba(184, 162, 216, 0.24);
+        font-size: 10px;
+      }
+
+      .insert-variable {
+        margin-top: 8px;
+        border: 0;
+        background: transparent;
+        padding: 0;
+        color: var(--accent);
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      .preview-text {
+        border-left: 2px solid rgba(230, 178, 119, 0.45);
+        padding-left: 10px;
+        color: var(--dim);
+        font-size: 11px;
+        line-height: 1.7;
+      }
+
+      .policy-row { display: grid; grid-template-columns: 1fr 82px; gap: 8px; }
+
+      .run-inspector { display: none; }
+      body[data-view="run"] .design-inspector { display: none; }
+      body[data-view="run"] .run-inspector { display: block; }
+
+      .run-summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 7px;
+        margin-bottom: 15px;
+      }
+
+      .metric { border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); padding: 9px; }
+      .metric-value { font-size: 15px; font-weight: 720; }
+      .metric-label { margin-top: 3px; color: var(--mute); font-size: 9px; }
+
+      .run-step { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .run-step:last-child { border-bottom: 0; }
+      .run-badge { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 9px; background: rgba(119, 196, 154, 0.12); color: var(--green); border: 1px solid rgba(119, 196, 154, 0.25); }
+      .run-step-name { font-size: 11px; font-weight: 650; }
+      .run-step-detail { color: var(--mute); font-size: 9px; margin-top: 4px; }
+      .run-time { color: var(--mute); font-size: 9px; }
+
+      .result-image {
+        height: 190px;
+        border-radius: 8px;
+        border: 1px solid var(--line-2);
+        overflow: hidden;
+        position: relative;
+        background:
+          radial-gradient(circle at 52% 22%, #e1b389 0 7%, transparent 7.5%),
+          linear-gradient(83deg, transparent 38%, #d8d2ca 39% 63%, transparent 64%) 50% 54% / 60% 38% no-repeat,
+          radial-gradient(ellipse at 50% 80%, #727b8b 0 25%, transparent 26%),
+          linear-gradient(145deg, #66737b 0%, #25303a 45%, #17191e 100%);
+      }
+
+      .result-image::after {
+        content: "生成结果 · 2K";
+        position: absolute;
+        left: 8px;
+        bottom: 8px;
+        height: 22px;
+        padding: 0 8px;
+        display: flex;
+        align-items: center;
+        border-radius: 5px;
+        background: rgba(0, 0, 0, 0.56);
+        color: var(--fg);
+        font-size: 9px;
+        backdrop-filter: blur(8px);
+      }
+
+      .run-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
+
+      .bottom-run {
+        position: absolute;
+        left: 250px;
+        right: 360px;
+        bottom: 10px;
+        height: 42px;
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        background: rgba(20, 20, 22, 0.94);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+        backdrop-filter: blur(18px);
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        gap: 10px;
+        z-index: 10;
+      }
+
+      .bottom-run .state-dot { flex: none; }
+      .run-copy { min-width: 0; flex: 1; }
+      .run-title { font-size: 11px; font-weight: 650; }
+      .run-detail { margin-top: 2px; color: var(--mute); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .progress-track { width: 110px; height: 3px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+      .progress-bar { height: 100%; width: 72%; border-radius: inherit; background: var(--accent); }
+      .bottom-run button { height: 28px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.035); border-radius: 6px; padding: 0 9px; color: var(--dim); cursor: pointer; font-size: 10px; }
+
+      body[data-view="run"] .step-card[data-status="done"] { border-color: rgba(119, 196, 154, 0.25); }
+      body[data-view="run"] .step-card[data-status="active"] { border-color: rgba(230, 178, 119, 0.7); }
+      body[data-view="run"] .step-card[data-status="done"] .state-dot { background: var(--green); }
+      body[data-view="run"] .step-card[data-status="active"] .state-dot { background: var(--accent); }
+
+      .toast {
+        position: fixed;
+        top: 68px;
+        left: 50%;
+        transform: translate(-50%, -12px);
+        opacity: 0;
+        pointer-events: none;
+        background: #222226;
+        border: 1px solid var(--line-2);
+        border-radius: 7px;
+        padding: 9px 12px;
+        color: var(--dim);
+        transition: 180ms ease;
+        z-index: 50;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+      }
+      .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+      @media (max-width: 1260px) {
+        .workspace { grid-template-columns: 210px minmax(500px, 1fr) 320px; }
+        .topbar { grid-template-columns: 180px 1fr 180px; }
+        .nav button { padding: 0 8px; font-size: 12px; }
+        .bottom-run { left: 228px; right: 338px; }
+      }
+    </style>
+  </head>
+  <body data-view="design">
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">TVision</span>
+          <span class="brand-sub">元流视觉</span>
+        </div>
+        <nav class="nav" aria-label="工作区">
+          <button>单图创作</button>
+          <button class="active">任务模式</button>
+          <button>批量工坊</button>
+          <button>Agent</button>
+          <button>模板</button>
+          <button>视频创作</button>
+          <button>历史生成</button>
+        </nav>
+        <div class="user-tools">
+          <button class="icon-btn" title="诊断台">⌁</button>
+          <button class="icon-btn" title="通知">○</button>
+          <div class="avatar">JL</div>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar">
+          <div class="side-head">
+            <div class="side-title">任务流程</div>
+            <button class="square-add" title="新建流程">＋</button>
+          </div>
+
+          <div class="side-label">最近编辑</div>
+          <div class="flow-list">
+            <button class="flow-item active">
+              <span class="flow-glyph">01</span>
+              <span class="flow-copy">
+                <span class="flow-name">商品氛围复刻</span>
+                <span class="flow-meta">5 步 · 刚刚编辑</span>
+              </span>
+              <span class="flow-menu">···</span>
+            </button>
+            <button class="flow-item">
+              <span class="flow-glyph">02</span>
+              <span class="flow-copy">
+                <span class="flow-name">模特换装精修</span>
+                <span class="flow-meta">4 步 · 昨天</span>
+              </span>
+              <span class="flow-menu">···</span>
+            </button>
+            <button class="flow-item">
+              <span class="flow-glyph">03</span>
+              <span class="flow-copy">
+                <span class="flow-name">详情页素材组</span>
+                <span class="flow-meta">7 步 · 7 月 15 日</span>
+              </span>
+              <span class="flow-menu">···</span>
+            </button>
+          </div>
+
+          <div class="side-label">流程模板</div>
+          <div class="flow-list">
+            <button class="flow-item">
+              <span class="flow-glyph">↗</span>
+              <span class="flow-copy">
+                <span class="flow-name">反推后重新创作</span>
+                <span class="flow-meta">内置模板</span>
+              </span>
+            </button>
+            <button class="flow-item">
+              <span class="flow-glyph">×4</span>
+              <span class="flow-copy">
+                <span class="flow-name">四版风格裂变</span>
+                <span class="flow-meta">内置模板</span>
+              </span>
+            </button>
+          </div>
+
+          <div class="side-spacer"></div>
+
+          <div class="node-library">
+            <div class="side-label" style="margin-top:0">节点库</div>
+            <div class="library-grid">
+              <div class="library-item"><span class="node-dot dot-image"></span>任务输入</div>
+              <div class="library-item"><span class="node-dot dot-ai"></span>视觉反推</div>
+              <div class="library-item"><span class="node-dot dot-text"></span>文本组合</div>
+              <div class="library-item"><span class="node-dot dot-output"></span>图片生成</div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="canvas-shell">
+          <div class="flow-toolbar">
+            <div class="flow-title-row">
+              <div class="flow-title">商品氛围复刻</div>
+              <span class="status-ok"><span>✓</span> 检查通过</span>
+            </div>
+            <div class="toolbar-actions">
+              <div class="tool-segment" aria-label="视图">
+                <button class="active" data-view-button="design">设计</button>
+                <button data-view-button="run">运行记录</button>
+              </div>
+              <button class="ghost-btn" id="saveButton"><span>◇</span> 保存</button>
+              <button class="primary-btn" id="runButton"><span>▶</span> 运行流程</button>
+            </div>
+          </div>
+
+          <div class="flow-scroll">
+            <div class="flow-column">
+              <article class="step-card" data-step="input" data-status="done">
+                <div class="step-index">IN</div>
+                <div class="step-main">
+                  <div class="step-name-row"><span class="drag-handle">⠿</span><span class="step-name">任务输入</span><span class="step-kind">3 个字段</span></div>
+                  <div class="step-summary">运行时上传原始图片、参考图，并填写补充描述</div>
+                  <div class="input-thumbs"><div class="mini-photo person"></div><div class="mini-photo garment"></div><span class="token text">自定义词</span></div>
+                </div>
+                <div class="step-state"><span class="state-dot ok"></span><span>就绪</span></div>
+              </article>
+
+              <div class="connector"><button class="insert-step" title="插入步骤">＋</button></div>
+
+              <article class="step-card" data-step="reverse" data-status="done">
+                <div class="step-index">01</div>
+                <div class="step-main">
+                  <div class="step-name-row"><span class="drag-handle">⠿</span><span class="step-name">视觉反推</span><span class="step-kind">图片 → 文本</span></div>
+                  <div class="step-summary">Gemini 3.1 Pro · 结构化描述</div>
+                  <div class="mapping-row"><span class="token image">任务输入.原始图</span><span class="arrow">→</span><span class="token output">反推提示词</span></div>
+                </div>
+                <div class="step-state"><span class="state-dot"></span><span>已配置</span></div>
+              </article>
+
+              <div class="connector"><button class="insert-step" title="插入步骤">＋</button></div>
+
+              <article class="step-card selected" data-step="merge" data-status="done">
+                <div class="step-index">02</div>
+                <div class="step-main">
+                  <div class="step-name-row"><span class="drag-handle">⠿</span><span class="step-name">提示词组合</span><span class="step-kind">文本 → 文本</span></div>
+                  <div class="step-summary">将反推结果与本次自定义要求合并</div>
+                  <div class="mapping-row">
+                    <span class="token text">视觉反推.反推提示词</span>
+                    <span class="token text">任务输入.自定义词</span>
+                    <span class="arrow">→</span>
+                    <span class="token output">最终提示词</span>
+                  </div>
+                </div>
+                <div class="step-state"><span class="state-dot"></span><span>已配置</span></div>
+              </article>
+
+              <div class="connector"><button class="insert-step" title="插入步骤">＋</button></div>
+
+              <article class="step-card" data-step="generate" data-status="active">
+                <div class="step-index">03</div>
+                <div class="step-main">
+                  <div class="step-name-row"><span class="drag-handle">⠿</span><span class="step-name">图片生成</span><span class="step-kind">文本 + 图片 → 图片</span></div>
+                  <div class="step-summary">Nano Banana Pro · 2K · 3:4 · 特价 · ×1</div>
+                  <div class="mapping-row"><span class="token text">提示词组合.最终提示词</span><span class="token image">任务输入.参考图</span><span class="arrow">→</span><span class="token output">生成图片</span></div>
+                </div>
+                <div class="step-state"><span class="state-dot"></span><span>已配置</span></div>
+              </article>
+
+              <div class="connector"><button class="insert-step" title="插入步骤">＋</button></div>
+
+              <article class="step-card" data-step="output" data-status="waiting">
+                <div class="step-index">OUT</div>
+                <div class="step-main">
+                  <div class="step-name-row"><span class="drag-handle">⠿</span><span class="step-name">任务输出</span><span class="step-kind">最终结果</span></div>
+                  <div class="step-summary">输出生成图片，并同步到历史生成</div>
+                  <div class="mapping-row"><span class="token output">图片生成.生成图片[1]</span></div>
+                </div>
+                <div class="step-state"><span class="state-dot"></span><span>已配置</span></div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-head">
+            <div>
+              <div class="inspector-title">提示词组合</div>
+              <div class="inspector-sub">步骤 02 · 文本处理</div>
+            </div>
+            <div class="toggle" title="启用步骤"></div>
+          </div>
+
+          <div class="inspector-scroll design-inspector">
+            <div class="section">
+              <div class="section-title">输入映射</div>
+              <div class="field">
+                <div class="label">反推提示词</div>
+                <div class="select-like"><span class="select-value"><span class="node-dot dot-text"></span>视觉反推 · 反推提示词</span><span class="caret">⌄</span></div>
+              </div>
+              <div class="field">
+                <div class="label">自定义词</div>
+                <div class="select-like"><span class="select-value"><span class="node-dot dot-text"></span>任务输入 · 自定义词</span><span class="caret">⌄</span></div>
+              </div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">组合模板</div>
+              <div class="template-box" contenteditable="true" spellcheck="false">
+                <span class="inline-token">视觉反推 · 反推提示词</span><br /><br />
+                在保持主体身份和核心构图一致的前提下，补充以下要求：<br />
+                <span class="inline-token">任务输入 · 自定义词</span>
+              </div>
+              <button class="insert-variable">＋ 插入变量</button>
+            </div>
+
+            <div class="section">
+              <div class="section-title">输出预览</div>
+              <div class="preview-text">一张冷调时尚棚拍，人物正面半身构图，柔和轮廓光…… 在保持主体身份和核心构图一致的前提下，替换为银灰色机能外套，并参考第二张图的材质。</div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">运行策略</div>
+              <div class="policy-row">
+                <div class="select-like"><span>失败时停止流程</span><span class="caret">⌄</span></div>
+                <button class="ghost-btn" style="justify-content:center;padding:0">运行到此</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="inspector-scroll run-inspector">
+            <div class="run-summary">
+              <div class="metric"><div class="metric-value">1</div><div class="metric-label">最终图片</div></div>
+              <div class="metric"><div class="metric-value">42s</div><div class="metric-label">总耗时</div></div>
+              <div class="metric"><div class="metric-value">5/5</div><div class="metric-label">成功步骤</div></div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">本次运行 · #T-0721</div>
+              <div class="run-step"><div class="run-badge">✓</div><div><div class="run-step-name">任务输入</div><div class="run-step-detail">3 个字段已读取</div></div><div class="run-time">0.1s</div></div>
+              <div class="run-step"><div class="run-badge">✓</div><div><div class="run-step-name">视觉反推</div><div class="run-step-detail">输出 612 字结构化提示词</div></div><div class="run-time">8.4s</div></div>
+              <div class="run-step"><div class="run-badge">✓</div><div><div class="run-step-name">提示词组合</div><div class="run-step-detail">合并 2 个文本变量</div></div><div class="run-time">0.1s</div></div>
+              <div class="run-step"><div class="run-badge">✓</div><div><div class="run-step-name">图片生成</div><div class="run-step-detail">Nano Banana Pro · 2K</div></div><div class="run-time">33s</div></div>
+              <div class="run-step"><div class="run-badge">✓</div><div><div class="run-step-name">任务输出</div><div class="run-step-detail">已同步到历史生成</div></div><div class="run-time">0.1s</div></div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">最终结果</div>
+              <div class="result-image"></div>
+              <div class="run-actions"><button class="ghost-btn" style="justify-content:center">设为画布</button><button class="ghost-btn" style="justify-content:center">下载</button></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="bottom-run">
+        <span class="state-dot running"></span>
+        <div class="run-copy"><div class="run-title">运行 #T-0722 · 图片生成中</div><div class="run-detail">步骤 4/5 · Nano Banana Pro 正在生成 1 张 2K 图片</div></div>
+        <div class="progress-track"><div class="progress-bar"></div></div>
+        <button>停止后续步骤</button>
+        <button data-view-button="run">查看</button>
+      </div>
+
+      <div class="toast" id="toast">流程已保存</div>
+    </div>
+
+    <script>
+      const viewButtons = document.querySelectorAll("[data-view-button]");
+      function setView(view) {
+        document.body.dataset.view = view;
+        viewButtons.forEach((button) => button.classList.toggle("active", button.dataset.viewButton === view));
+      }
+      viewButtons.forEach((button) => button.addEventListener("click", () => setView(button.dataset.viewButton)));
+      document.getElementById("runButton").addEventListener("click", () => setView("run"));
+      document.getElementById("saveButton").addEventListener("click", () => {
+        const toast = document.getElementById("toast");
+        toast.classList.add("show");
+        window.setTimeout(() => toast.classList.remove("show"), 1200);
+      });
+      document.querySelectorAll(".step-card").forEach((card) => {
+        card.addEventListener("click", () => {
+          document.querySelectorAll(".step-card").forEach((item) => item.classList.remove("selected"));
+          card.classList.add("selected");
+        });
+      });
+    </script>
+  </body>
+</html>

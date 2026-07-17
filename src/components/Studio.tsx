@@ -5,9 +5,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { useBatchStore } from "@/lib/batchStore";
 import { diag, useLogStore } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
+import { useTaskStore } from "@/lib/taskStore";
 import { compositeInpaintResult, downscaleImageSrc, fakeProgressCurve } from "@/lib/utils";
 import { AgentPanel } from "./AgentPanel";
-import { BatchBar } from "./BatchBar";
 import { BatchLightbox } from "./BatchLightbox";
 import { BatchWorkshop } from "./BatchWorkshop";
 import { BrushPanel } from "./BrushPanel";
@@ -22,8 +22,9 @@ import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
 import { Stage } from "./Stage";
 import { StickerPanel } from "./StickerPanel";
+import { TaskWorkshop } from "./TaskWorkshop";
 import { TemplateWorkshop } from "./TemplateWorkshop";
-import { VideoWorkshop } from "./VideoWorkshop";
+import { VideoTaskPoller, VideoWorkshop } from "./VideoWorkshop";
 import { Toaster } from "./Toaster";
 import { UserChip } from "./UserChip";
 import { IconButton, Segmented } from "./ui";
@@ -49,6 +50,7 @@ export default function Studio() {
 
   const batchModels = useBatchStore((s) => s.models);
   const batchRunState = useBatchStore((s) => s.runState);
+  const taskRunStatus = useTaskStore((s) => s.currentRun?.status);
 
   const phase = useStudio((s) => s.phase);
   const jobIds = useStudio((s) => s.jobIds);
@@ -318,13 +320,24 @@ export default function Studio() {
 
       <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-line px-4">
         <Logo />
-        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <div className="pointer-events-auto">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 max-w-[calc(100vw-250px)] -translate-x-1/2 -translate-y-1/2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="pointer-events-auto w-max">
             <Segmented
               value={workMode}
               onChange={setWorkMode}
               options={[
                 { value: "single", label: "单图创作" },
+                {
+                  value: "task",
+                  label: (
+                    <span className="inline-flex items-center gap-1.5">
+                      任务模式
+                      {taskRunStatus === "queued" || taskRunStatus === "running" ? (
+                        <span className="breathe h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                      ) : null}
+                    </span>
+                  ),
+                },
                 {
                   value: "batch",
                   label: (
@@ -365,10 +378,11 @@ export default function Studio() {
             <GenerateBar />
             <ResultView />
           </>
+        ) : workMode === "task" ? (
+          <TaskWorkshop />
         ) : workMode === "batch" ? (
           <>
             <BatchWorkshop />
-            <BatchBar />
             <BatchLightbox />
           </>
         ) : workMode === "agent" ? (
@@ -387,6 +401,7 @@ export default function Studio() {
       <AnimatePresence>{stickerOpen ? <StickerPanel /> : null}</AnimatePresence>
       <AnimatePresence>{settingsOpen ? <SettingsPanel /> : null}</AnimatePresence>
       <AnimatePresence>{panelOpen ? <DiagnosticsPanel /> : null}</AnimatePresence>
+      <VideoTaskPoller />
       <Toaster />
     </div>
   );

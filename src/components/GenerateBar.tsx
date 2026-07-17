@@ -6,7 +6,7 @@ import { getAction } from "@/lib/actions";
 import { diag } from "@/lib/logStore";
 import { ASPECT_RATIOS, BILLINGS, comboError, GPT_IMAGE_2_RATIOS, MODELS, QUALITY_OPTIONS, resolutionsFor } from "@/lib/models";
 import { useStudio } from "@/lib/store";
-import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
+import type { Billing, InpaintJob, ModelName, Quality, Resolution } from "@/lib/types";
 import { cn, cropImageToDataURL, downscaleImageSrc, fakeVisionProgressCurve } from "@/lib/utils";
 import { VISION_MODELS } from "@/lib/visionModels";
 import { Icon } from "./icons";
@@ -21,6 +21,8 @@ export function GenerateBar() {
   const refImages = useStudio((s) => s.refImages);
   const inpaintMask = useStudio((s) => s.inpaintMask);
   const setInpaintJob = useStudio((s) => s.setInpaintJob);
+  const openBrushPanel = useStudio((s) => s.openBrushPanel);
+  const clearInpaint = useStudio((s) => s.clearInpaint);
   const cancelAction = useStudio((s) => s.cancelAction);
   const phase = useStudio((s) => s.phase);
   const analyzingVision = useStudio((s) => s.analyzingVision);
@@ -43,11 +45,13 @@ export function GenerateBar() {
   const resOptions = resolutionsFor(params.model);
   const cErr = comboError(params.model, params.resolution, params.billing, params.aspectRatio);
   const needsRefMissing = !!action?.needsRef && refImages.length === 0;
+  const requiredMaskMissing = !!action?.usesBrush && !inpaintMask;
   const canGenerate =
     !!image &&
     (!!params.prompt.trim() || !!action?.textToImage) &&
     !cErr &&
     !needsRefMissing &&
+    !requiredMaskMissing &&
     !busy &&
     !analyzingVision;
 
@@ -181,6 +185,11 @@ export function GenerateBar() {
       showToast("error", action?.refLabel || "请先上传参考图");
       return;
     }
+    if (requiredMaskMissing) {
+      showToast("error", "请先涂抹要移除的物品");
+      openBrushPanel(true);
+      return;
+    }
     if (cErr) {
       showToast("error", cErr);
       return;
@@ -192,6 +201,12 @@ export function GenerateBar() {
     // to whatever ratio the (unrelated, now-disabled) selector last held.
     let submitImage = image.src;
     let submitAspect = params.aspectRatio;
+    let pendingInpaintJob: InpaintJob | null = null;
+    const submitSnapshot = {
+      imageSrc: image.src,
+      actionId: activeActionId,
+      mask: inpaintMask,
+    };
     if (inpaintMask) {
       if (!params.prompt.trim()) {
         showToast("error", "请先在对话框写明这块区域要改成什么");
@@ -212,11 +227,11 @@ export function GenerateBar() {
         // the brush panel while this job is still running, inpaintMask could
         // change before results land — the composite step must use the mask
         // that was actually submitted.
-        setInpaintJob({ origSrc: image.src, bboxPx: inpaintMask.bboxPx, maskUrl: inpaintMask.maskUrl });
+        pendingInpaintJob = { origSrc: image.src, bboxPx: inpaintMask.bboxPx, maskUrl: inpaintMask.maskUrl };
         diag(
           "info",
-          "局部重绘",
-          "提交局部重绘",
+          action?.label ?? "局部重绘",
+          `提交${action?.label ?? "局部重绘"}`,
           JSON.stringify(
             {
               bboxAreaRatio: Number(
@@ -241,6 +256,20 @@ export function GenerateBar() {
       }
     }
 
+    // Cropping/downscaling can take noticeable time for large images. If the
+    // user cancels, changes the image, or repaints the mask during that await,
+    // discard this stale submission before it can create a billable job.
+    const latest = useStudio.getState();
+    if (
+      latest.image?.src !== submitSnapshot.imageSrc ||
+      latest.activeActionId !== submitSnapshot.actionId ||
+      latest.inpaintMask !== submitSnapshot.mask
+    ) {
+      diag("info", "提交", "已取消过期的生成请求", "图片或编辑选区在预处理期间发生变化");
+      return;
+    }
+    if (pendingInpaintJob) setInpaintJob(pendingInpaintJob);
+
     beginSubmit();
     diag(
       "info",
@@ -248,7 +277,7 @@ export function GenerateBar() {
       "提交生成请求",
       JSON.stringify(
         {
-          action: inpaintMask ? "局部重绘" : (action?.label ?? "自由提示词"),
+          action: inpaintMask ? (action?.label ?? "局部重绘") : (action?.label ?? "自由提示词"),
           model: params.model,
           resolution: params.resolution,
           aspectRatio: submitAspect,
@@ -312,7 +341,22 @@ export function GenerateBar() {
         >
           {/* action chip + reference */}
           <div className="mb-2.5 flex flex-wrap items-center gap-2">
-            {action ? (
+            {inpaintMask && !action ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] py-1 pl-2 pr-1 text-sm">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-accent">
+                  <Icon name="PaintBrush" size={13} weight="bold" />
+                </span>
+                <span className="font-medium text-fg">局部重绘</span>
+                <button
+                  onClick={clearInpaint}
+                  disabled={busy}
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-fg-mute hover:bg-white/10 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                  aria-label="取消局部重绘"
+                >
+                  <Icon name="X" size={13} />
+                </button>
+              </span>
+            ) : action ? (
               <span className="inline-flex items-center gap-2 rounded-full bg-white/[0.06] py-1 pl-2 pr-1 text-sm">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-accent">
                   <Icon
@@ -325,7 +369,8 @@ export function GenerateBar() {
                 <span className="font-medium text-fg">{action.label}</span>
                 <button
                   onClick={cancelAction}
-                  className="flex h-6 w-6 items-center justify-center rounded-full text-fg-mute hover:bg-white/10 hover:text-fg"
+                  disabled={busy}
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-fg-mute hover:bg-white/10 hover:text-fg disabled:pointer-events-none disabled:opacity-40"
                   aria-label="取消操作"
                 >
                   <Icon name="X" size={13} />
@@ -340,6 +385,11 @@ export function GenerateBar() {
             )}
             {action?.textToImage ? (
               <span className="text-xs text-fg-mute">仅用下方文字提示词生成，不使用原图作为参考</span>
+            ) : null}
+            {action?.usesBrush ? (
+              <span className="text-xs text-fg-mute">
+                {inpaintMask ? "已选择移除区域，可微调提示词后生成" : "请先涂抹要移除的物品"}
+              </span>
             ) : null}
           </div>
 

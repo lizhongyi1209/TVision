@@ -21,13 +21,12 @@ export const MAX_REF_IMAGES = 8;
  *  would shrink below a usable size. */
 export const MAX_BATCH_GARMENTS = 50;
 
-/** Model rail cap. 1 model renders the batch grid view; 2+ switches to the
- *  all-pairs matrix, whose column count is this number — past it the matrix
- *  stops being comfortably readable in one viewport width. */
-export const MAX_BATCH_MODELS = 6;
+/** Main-image cap. The compose view keeps these in a horizontal asset strip,
+ *  while the result matrix scrolls horizontally when many columns are used. */
+export const MAX_BATCH_MODELS = 50;
 
 /** Hard ceiling on models × garments for a single run (BatchBar's generate
  *  button disables and asks the user to split when exceeded). Bounds one
  *  run's submit/poll fan-out and in-memory result set regardless of how the
- *  two caps above combine (e.g. 6 models × 50 garments = 300, well over this). */
+ *  two caps above combine (e.g. 50 models × 50 garments = 2500, well over this). */
 export const MAX_BATCH_TASKS = 100;

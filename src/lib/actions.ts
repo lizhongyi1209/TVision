@@ -29,6 +29,10 @@ export interface StudioAction {
    *  with this flag should return "" from buildPrompt() so the prompt box
    *  starts empty while the analysis is running. */
   visionAnalysis?: boolean;
+  /** When true, selecting the action opens BrushPanel and generation is
+   *  blocked until the user confirms a painted selection. The selected crop
+   *  then follows the existing local-repaint/composite pipeline. */
+  usesBrush?: boolean;
   buildPrompt: () => string;
 }
 
@@ -127,6 +131,20 @@ export const ACTIONS: StudioAction[] = [
     defaultCount: 1,
     buildPrompt: () =>
       "Replace the background with a clean, pure white (#FFFFFF) seamless studio backdrop for an e-commerce hero image. Keep the main subject completely identical: same shape, color, materials, logo/label text, proportions and orientation. Center the subject with soft, even studio lighting and a subtle natural contact shadow beneath it. Crisp commercial product photography, sharp focus, high detail, professional e-commerce main image.",
+  },
+  {
+    id: "remove-object",
+    label: "物品移除",
+    hint: "涂抹不需要的物品，智能补全被遮挡的背景",
+    icon: "Broom",
+    needsRef: false,
+    refLabel: "",
+    refHint: "",
+    defaultAspect: "auto",
+    defaultCount: 1,
+    usesBrush: true,
+    buildPrompt: () =>
+      "This image is a tight crop around an unwanted object selected by the user. Remove the unwanted object entirely. Reconstruct every area it occluded by naturally extending the surrounding background, surfaces, textures, patterns, edges, perspective, lighting, shadows and reflections. Do not add a replacement object. Keep all remaining visible content unchanged. The result must look as if the object was never present, with no residue, blur, halos, seams, duplicated details or patch boundaries.",
   },
   {
     id: "action-variation",

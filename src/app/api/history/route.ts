@@ -5,6 +5,7 @@ import type { HistoryItem } from "@/lib/types";
 import { jobIdForFile, readMetaMap } from "@/lib/historyMeta";
 import { readVideoMetaMap, taskIdForVideoFile } from "@/lib/videoMeta";
 import { requireAuth } from "@/lib/auth";
+import { canAccessWorkflowAsset } from "@/lib/workflowAssets.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,14 +13,15 @@ export const dynamic = "force-dynamic";
 const OUTPUT_DIR = path.join(process.cwd(), "output");
 
 export async function GET() {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   try {
     const [metaMap, videoMetaMap] = await Promise.all([readMetaMap(), readVideoMetaMap()]);
     const files = await fs.readdir(OUTPUT_DIR);
 
     const items: HistoryItem[] = await Promise.all(
       files
-        .filter((f) => /\.(png|jpe?g|webp|mp4)$/i.test(f))
+        .filter((f) => /\.(png|jpe?g|webp|mp4)$/i.test(f) && canAccessWorkflowAsset(f, auth.uid))
         .map(async (f) => {
           const st = await fs.stat(path.join(OUTPUT_DIR, f));
           if (/\.mp4$/i.test(f)) {
@@ -49,11 +51,16 @@ export async function GET() {
 }
 
 export async function DELETE(req: Request) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = (await req.json().catch(() => ({ name: null }))) as { name: string | null };
   if (!name) return NextResponse.json({ ok: false }, { status: 400 });
+  const safe = path.basename(name);
+  if (!canAccessWorkflowAsset(safe, auth.uid)) {
+    return NextResponse.json({ ok: false }, { status: 404 });
+  }
   try {
-    await fs.unlink(path.join(OUTPUT_DIR, path.basename(name)));
+    await fs.unlink(path.join(OUTPUT_DIR, safe));
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ ok: false }, { status: 404 });

@@ -295,13 +295,18 @@ export async function submitTask(
   baseUrl: string,
   apiKey: string,
   body: SubmitBody | GptImageSubmitBody,
+  options?: { idempotencyKey?: string },
 ): Promise<string> {
   const url = `${baseUrl}${SUBMIT_ENDPOINT}`;
   let res: Response;
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        ...(options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
+      },
       body: JSON.stringify(body),
     });
   } catch (e) {

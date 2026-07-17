@@ -29,7 +29,7 @@ export type Phase = "idle" | "submitting" | "running" | "success" | "error";
  *  low-frequency toggle that both Studio.tsx's top bar and the batch store's
  *  Studio-image-handoff effect need to read, and putting it here avoids those
  *  stores having to import from Studio.tsx. */
-export type WorkMode = "single" | "batch" | "agent" | "templates" | "video" | "history";
+export type WorkMode = "single" | "task" | "batch" | "agent" | "templates" | "video" | "history";
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";
@@ -120,7 +120,9 @@ interface StudioState {
   closeMenu: () => void;
   openCrop: () => void;
   closeCrop: () => void;
-  openBrushPanel: () => void;
+  /** Open the brush panel. Pass true when adjusting the current brush-driven
+   *  action; the default opens plain local repaint and drops any AI action. */
+  openBrushPanel: (preserveBrushAction?: boolean) => void;
   closeBrushPanel: () => void;
   openSticker: () => void;
   closeSticker: () => void;
@@ -233,11 +235,42 @@ export const useStudio = create<StudioState>((set) => ({
 
   openCrop: () => set((s) => (s.image ? { cropOpen: true, menuOpen: false } : {})),
   closeCrop: () => set({ cropOpen: false }),
-  // Brush tool and AI actions are mutually exclusive: opening the panel also
-  // drops any chosen AI action/ref (mirrors chooseAction clearing inpaint below).
-  openBrushPanel: () =>
-    set((s) => (s.image ? { brushPanelOpen: true, menuOpen: false, activeActionId: null, refImages: [] } : {})),
-  closeBrushPanel: () => set({ brushPanelOpen: false }),
+  // Manual local repaint clears any regular AI action. A brush-driven action
+  // (物品移除) stays active when its selection is reopened for adjustment.
+  openBrushPanel: (preserveBrushAction = false) =>
+    set((s) => {
+      if (!s.image) return {};
+      const action = getAction(s.activeActionId);
+      return preserveBrushAction && action?.usesBrush
+        ? { brushPanelOpen: true, menuOpen: false }
+        : {
+            brushPanelOpen: true,
+            menuOpen: false,
+            activeActionId: null,
+            refImages: [],
+            ...(action?.usesBrush
+              ? {
+                  inpaintMask: null,
+                  inpaintJob: null,
+                  params: { ...s.params, prompt: "" },
+                }
+              : {}),
+          };
+    }),
+  closeBrushPanel: () =>
+    set((s) => {
+      const action = getAction(s.activeActionId);
+      // Cancelling the first required selection cancels the action too. Clear
+      // its specialized prompt so it cannot be submitted against the full image.
+      if (action?.usesBrush && !s.inpaintMask) {
+        return {
+          brushPanelOpen: false,
+          activeActionId: null,
+          params: { ...s.params, prompt: "" },
+        };
+      }
+      return { brushPanelOpen: false };
+    }),
   openSticker: () => set((s) => (s.image ? { stickerOpen: true, menuOpen: false } : {})),
   closeSticker: () => set({ stickerOpen: false }),
   setInpaintMask: (m) => set({ inpaintMask: m }),
@@ -252,6 +285,7 @@ export const useStudio = create<StudioState>((set) => ({
     set((s) => ({
       activeActionId: id,
       menuOpen: false,
+      brushPanelOpen: !!a.usesBrush,
       // D4 (PLAN-MULTI-REF): any preset action selection clears free-mode refs
       // outright, regardless of whether this action itself needsRef — this
       // also closes the old hazard where a leftover refImage from a previous
@@ -286,8 +320,9 @@ export const useStudio = create<StudioState>((set) => ({
   },
 
   cancelAction: () =>
-    set({
+    set((s) => ({
       activeActionId: null,
+      brushPanelOpen: false,
       refImages: [],
       results: null,
       resultIndex: 0,
@@ -300,7 +335,10 @@ export const useStudio = create<StudioState>((set) => ({
       visionError: null,
       inpaintMask: null,
       inpaintJob: null,
-    }),
+      // A mask-required prompt is unsafe without its selection. Other action
+      // prompts keep the established behavior and remain editable in free mode.
+      params: getAction(s.activeActionId)?.usesBrush ? { ...s.params, prompt: "" } : s.params,
+    })),
 
   addRefs: (dataUrls) =>
     set((s) => ({ refImages: [...s.refImages, ...dataUrls].slice(0, MAX_REF_IMAGES) })),
@@ -344,7 +382,7 @@ export const useStudio = create<StudioState>((set) => ({
   dismissResults: () => set({ results: null, resultIndex: 0, resultsOpen: false, phase: "idle" }),
 
   useResultAsCanvas: (img) =>
-    set({
+    set((s) => ({
       image: img,
       results: null,
       resultIndex: 0,
@@ -355,7 +393,10 @@ export const useStudio = create<StudioState>((set) => ({
       menuOpen: false,
       inpaintMask: null,
       inpaintJob: null,
-    }),
+      // Brush-action prompts describe a cropped selection and are unsafe once
+      // the composite becomes a fresh full canvas with no matching mask.
+      params: getAction(s.activeActionId)?.usesBrush ? { ...s.params, prompt: "" } : s.params,
+    })),
 
   setResultIndex: (i) => set({ resultIndex: i }),
   openResults: () => set((s) => (s.results && s.results.length > 0 ? { resultsOpen: true } : {})),

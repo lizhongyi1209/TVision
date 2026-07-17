@@ -2,6 +2,7 @@
 
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getAction } from "@/lib/actions";
 import { diag } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -64,9 +65,13 @@ function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, w: number, h: num
 // this panel only produces the selection.
 export function BrushPanel() {
   const image = useStudio((s) => s.image);
+  const activeActionId = useStudio((s) => s.activeActionId);
   const close = useStudio((s) => s.closeBrushPanel);
   const setInpaintMask = useStudio((s) => s.setInpaintMask);
   const showToast = useStudio((s) => s.showToast);
+  const brushAction = getAction(activeActionId)?.usesBrush ? getAction(activeActionId) : undefined;
+  const panelLabel = brushAction?.label ?? "局部重绘";
+  const panelIcon = brushAction?.icon ?? "PaintBrush";
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -214,7 +219,7 @@ export function BrushPanel() {
       };
 
       setInpaintMask({ maskUrl, bboxPx });
-      diag("info", "局部重绘", "已标记涂抹区域", `bbox ${bboxPx.w}×${bboxPx.h} @ (${bboxPx.x},${bboxPx.y})`);
+      diag("info", panelLabel, "已标记涂抹区域", `bbox ${bboxPx.w}×${bboxPx.h} @ (${bboxPx.x},${bboxPx.y})`);
       close();
     } catch {
       showToast("error", "生成涂抹遮罩失败，请重试");
@@ -244,8 +249,8 @@ export function BrushPanel() {
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <Icon name="PaintBrush" size={18} className="text-accent" />
-            <span className="font-medium text-fg">局部重绘</span>
+            <Icon name={panelIcon} size={18} className="text-accent" />
+            <span className="font-medium text-fg">{panelLabel}</span>
           </div>
           <button onClick={close} className="text-fg-mute hover:text-fg" aria-label="关闭">
             <Icon name="X" size={18} />
@@ -253,7 +258,9 @@ export function BrushPanel() {
         </div>
 
         <div className="px-5 pt-3 text-xs leading-relaxed text-fg-mute">
-          涂抹要修改的区域，其余部分生成时保持不变；提示词请在下方对话框自己填写
+          {brushAction?.usesBrush
+            ? "完整涂抹要移除的物品，适当覆盖边缘和阴影；AI 会补全被遮挡的背景，其余区域保持不变"
+            : "涂抹要修改的区域，其余部分生成时保持不变；提示词请在下方对话框自己填写"}
         </div>
 
         <div
@@ -334,7 +341,7 @@ export function BrushPanel() {
             <Button variant="ghost" onClick={close}>取消</Button>
             <Button variant="primary" onClick={confirm} disabled={strokes.length === 0 || confirming} className="px-5">
               {confirming ? <Icon name="CircleNotch" size={15} className="animate-spin" /> : <Icon name="Check" size={15} weight="bold" />}
-              确认
+              {brushAction?.usesBrush ? "确认移除区域" : "确认"}
             </Button>
           </div>
         </div>
