@@ -7,6 +7,8 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { LIMITS, MAX_ACTIVE_JOBS, rateLimit } from "@/lib/rateLimit.server";
+import { activeJobCount, registerJobs } from "@/lib/jobRegistry.server";
 import { resolveBaseUrl } from "@/lib/o1key";
 import {
   VIDEO_MODEL_IDS,
@@ -32,7 +34,13 @@ const VALID_RATIOS = new Set(["智能", "16:9", "4:3", "1:1", "3:4", "9:16", "21
 export async function POST(req: Request) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  if (!rateLimit("generate", auth.uid, LIMITS.GENERATE_PER_UID)) {
+    return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
+  if (activeJobCount(auth.uid) >= MAX_ACTIVE_JOBS) {
+    return NextResponse.json({ error: `同时进行的任务过多（上限 ${MAX_ACTIVE_JOBS}），请等待部分任务完成` }, { status: 429 });
+  }
+  const s = await readSettings(auth.uid);
   if (!s.apiKey) return NextResponse.json({ error: "未设置 API 令牌" }, { status: 400 });
 
   const p = (await req.json().catch(() => ({}))) as VideoJobParams;
@@ -54,6 +62,8 @@ export async function POST(req: Request) {
   const sound     = p.sound === true;
   const watermark = p.watermark === true;
   const webSearch = p.webSearch === true;
+  const cameraFixed = p.cameraFixed === true;
+  const seed = typeof p.seed === "number" && Number.isInteger(p.seed) ? p.seed : undefined;
   const imageUrl  = typeof p.imageUrl === "string" ? p.imageUrl : "";
   const tailUrl   = typeof p.tailUrl === "string" ? p.tailUrl : "";
   const cleanStringArray = (value: unknown) => Array.isArray(value)
@@ -122,6 +132,8 @@ export async function POST(req: Request) {
         sound,
         watermark,
         webSearch,
+        cameraFixed,
+        seed,
         imageUrl: imageUrl || undefined,
         tailUrl: tailUrl || undefined,
         refUrls,
@@ -195,22 +207,24 @@ export async function POST(req: Request) {
 
   const text = await submitRes.text();
   if (![200, 201, 202].includes(submitRes.status)) {
-    return NextResponse.json({ error: `提交失败 HTTP ${submitRes.status}: ${text.slice(0, 300)}` }, { status: 502 });
+    return NextResponse.json({ error: `提交失败 HTTP ${submitRes.status}: ${text.slice(0, 300)}` }, { status: 500 });
   }
 
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(text);
   } catch {
-    return NextResponse.json({ error: `响应非 JSON: ${text.slice(0, 200)}` }, { status: 502 });
+    return NextResponse.json({ error: `响应非 JSON: ${text.slice(0, 200)}` }, { status: 500 });
   }
 
   // task_id 的提取（同 K3_video.py 的 create_resp 处理）
   const taskId = extractVideoTaskId(payload);
 
   if (!taskId) {
-    return NextResponse.json({ error: `API 未返回 task_id: ${JSON.stringify(payload).slice(0, 200)}` }, { status: 502 });
+    return NextResponse.json({ error: `API 未返回 task_id: ${JSON.stringify(payload).slice(0, 200)}` }, { status: 500 });
   }
+
+  registerJobs(auth.uid, [taskId], "video");
 
   // 记录提交的参数（video sidecar），用于历史还原
   return NextResponse.json({
@@ -224,5 +238,7 @@ export async function POST(req: Request) {
     aspectRatio,
     watermark,
     webSearch,
+    cameraFixed,
+    seed,
   });
 }

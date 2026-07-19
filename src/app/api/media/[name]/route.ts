@@ -1,55 +1,50 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import path from "path";
 import { requireAuth } from "@/lib/auth";
-import { canAccessWorkflowAsset, isWorkflowScopedAsset } from "@/lib/workflowAssets.server";
+import {
+  contentTypeFor,
+  getObject,
+  ownsAsset,
+  presignGet,
+  putObject,
+  registerAsset,
+  removeAsset,
+} from "@/lib/storage.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OUTPUT_DIR = path.join(process.cwd(), "output");
-const TYPES: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".mp4": "video/mp4",
-};
+const TYPES = new Set([".png", ".jpg", ".jpeg", ".webp", ".mp4"]);
 
-// Stream a generated image from /output. Path is basename-sanitized to prevent traversal.
+// Serve a generated asset. Ownership check runs against the assets table
+// (per-tenant), so cross-tenant reads 404 even with a guessed filename.
+// S3 mode redirects to a presigned/CDN URL; local mode streams bytes.
 export async function GET(_req: Request, ctx: { params: Promise<{ name: string }> }) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
-  if (!canAccessWorkflowAsset(safe, auth.uid)) return new Response("Not found", { status: 404 });
   const ext = path.extname(safe).toLowerCase();
-  const type = TYPES[ext];
-  if (!type) return new Response("Not found", { status: 404 });
+  if (!TYPES.has(ext)) return new Response("Not found", { status: 404 });
+  if (!ownsAsset(auth.uid, safe)) return new Response("Not found", { status: 404 });
 
-  try {
-    const buf = await fs.readFile(path.join(OUTPUT_DIR, safe));
-    return new Response(new Uint8Array(buf), {
-      headers: {
-        "Content-Type": type,
-        "Cache-Control": isWorkflowScopedAsset(safe)
-          ? "private, max-age=31536000, immutable"
-          : "public, max-age=31536000, immutable",
-      },
-    });
-  } catch {
-    return new Response("Not found", { status: 404 });
-  }
+  const direct = await presignGet(auth.uid, safe);
+  if (direct) return NextResponse.redirect(direct, 302);
+
+  const buf = await getObject(auth.uid, safe);
+  if (!buf) return new Response("Not found", { status: 404 });
+  return new Response(new Uint8Array(buf), {
+    headers: {
+      "Content-Type": contentTypeFor(safe),
+      // 内容按文件名不可变，但按租户私有——绝不能进共享缓存
+      "Cache-Control": "private, max-age=31536000, immutable",
+    },
+  });
 }
 
-async function findExisting(base: string): Promise<string | null> {
+function findExisting(uid: string, base: string): string | null {
   for (const ext of [".png", ".jpg", ".jpeg", ".webp"]) {
-    try {
-      await fs.access(path.join(OUTPUT_DIR, base + ext));
-      return base + ext;
-    } catch {
-      // keep looking
-    }
+    if (ownsAsset(uid, base + ext)) return base + ext;
   }
   return null;
 }
@@ -60,15 +55,12 @@ export async function PUT(req: Request, ctx: { params: Promise<{ name: string }>
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
   const safe = path.basename(name);
-  if (!canAccessWorkflowAsset(safe, auth.uid)) {
-    return NextResponse.json({ ok: false, error: "对应的历史文件不存在" }, { status: 404 });
-  }
   if (!/^[\w.-]+\.png$/i.test(safe)) {
     return NextResponse.json({ ok: false, error: "文件名不合法" }, { status: 400 });
   }
   const base = safe.slice(0, -4);
 
-  const existing = await findExisting(base);
+  const existing = findExisting(auth.uid, base);
   if (!existing) return NextResponse.json({ ok: false, error: "对应的历史文件不存在" }, { status: 404 });
 
   const buf = Buffer.from(await req.arrayBuffer());
@@ -78,15 +70,12 @@ export async function PUT(req: Request, ctx: { params: Promise<{ name: string }>
   const isPng = buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
   if (!isPng) return NextResponse.json({ ok: false, error: "不是有效的图片" }, { status: 400 });
 
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
-  await fs.writeFile(path.join(OUTPUT_DIR, base + ".png"), buf);
+  await putObject(auth.uid, base + ".png", buf);
+  registerAsset(auth.uid, base + ".png", "image", buf.length);
 
+  // 清掉同名旧格式文件（inpaint 结果统一存 png）
   for (const ext of [".jpg", ".jpeg", ".webp"]) {
-    try {
-      await fs.unlink(path.join(OUTPUT_DIR, base + ext));
-    } catch {
-      // no old file to clean up
-    }
+    if (existing === base + ext) await removeAsset(auth.uid, base + ext);
   }
 
   return NextResponse.json({ ok: true, url: `/api/media/${base}.png` });

@@ -9,15 +9,14 @@
 // on the same base URL, used purely for image understanding. Server-only
 // (uses fetch + fs). Imported by route handlers.
 
-import { promises as fs } from "fs";
 import { promises as dns } from "dns";
+import { getObject, ownsAsset } from "./storage.server.ts";
 import * as http from "http";
 import * as https from "https";
 import { isIP } from "net";
 import path from "path";
 import { VISION_MODELS } from "./visionModels.ts";
 
-const OUTPUT_DIR = path.join(process.cwd(), "output");
 const MEDIA_EXT_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -175,29 +174,21 @@ function localMediaName(src: string): string | null {
   return name;
 }
 
-/** Browser-submitted workflow inputs must be self-contained. Even authenticated
- * /api/media names are not accepted here because output storage is not yet user-scoped. */
+/** Browser-submitted workflow inputs: self-contained data URLs, or the
+ * caller's own /api/media assets — ownership is enforced again at resolve
+ * time (readLocalImage), so a foreign name fails the run, never leaks. */
 export function isAllowedWorkflowImageSource(src: string): boolean {
-  return isSupportedImageDataUrl(src);
+  return isSupportedImageDataUrl(src) || localMediaName(src) !== null;
 }
 
-async function readLocalImage(file: string): Promise<Buffer> {
-  const handle = await fs.open(file, "r");
-  try {
-    const stat = await handle.stat();
-    if (!stat.isFile()) throw new Error("本地图片不是文件");
-    if (stat.size > MAX_LOCAL_IMAGE_BYTES) throw new Error("本地图片超过大小上限");
-    const bytes = Buffer.alloc(stat.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
-      if (!result.bytesRead) break;
-      offset += result.bytesRead;
-    }
-    return bytes.subarray(0, offset);
-  } finally {
-    await handle.close();
-  }
+async function readLocalImage(uid: string, name: string): Promise<Buffer> {
+  // Ownership first: a guessed filename from another tenant must be
+  // indistinguishable from a missing file.
+  if (!ownsAsset(uid, name)) throw new Error("找不到本地图片文件");
+  const bytes = await getObject(uid, name);
+  if (!bytes) throw new Error("找不到本地图片文件");
+  if (bytes.length > MAX_LOCAL_IMAGE_BYTES) throw new Error("本地图片超过大小上限");
+  return bytes;
 }
 
 async function resolvePublicAddress(hostname: string): Promise<{ address: string; family: 4 | 6 }> {
@@ -312,7 +303,10 @@ async function readRemoteImage(
   });
 }
 
-export async function resolveImageToDataUrl(src: string): Promise<string> {
+/** `uid`: required to resolve /api/media/<name> references — the read is
+ *  scoped to that tenant's assets. Callers without a tenant context simply
+ *  can't reference local media (data URLs / remote URLs still work). */
+export async function resolveImageToDataUrl(src: string, uid?: string): Promise<string> {
   if (src.startsWith("data:")) {
     if (!isSupportedImageDataUrl(src)) throw new Error("不支持或无效的图片 data URL");
     return src;
@@ -321,16 +315,12 @@ export async function resolveImageToDataUrl(src: string): Promise<string> {
   if (src.startsWith("/")) {
     const name = localMediaName(src);
     if (!name) throw new Error("无法识别的本地图片地址");
+    if (!uid) throw new Error("找不到本地图片文件");
     const ext = path.extname(name).toLowerCase();
     const type = MEDIA_EXT_TYPES[ext];
     if (!type) throw new Error("不支持的图片格式");
-    try {
-      const bytes = await readLocalImage(path.join(OUTPUT_DIR, name));
-      return `data:${type};base64,${bytes.toString("base64")}`;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("找不到本地图片文件");
-      throw error;
-    }
+    const bytes = await readLocalImage(uid, name);
+    return `data:${type};base64,${bytes.toString("base64")}`;
   }
 
   if (src.startsWith("http://") || src.startsWith("https://")) {

@@ -1,46 +1,68 @@
-// Server-side persistence for templates (PLAN-TEMPLATE): one JSON array in
-// data/templates.json — same data-dir pattern as settings.ts/historyMeta.ts.
+// Server-side persistence for templates (PLAN-TEMPLATE): rows in the
+// templates table keyed (uid, id) — per-tenant since the multi-tenant
+// refactor, and SQLite transactions replace the old lockless
+// read-modify-write on data/templates.json.
 
-import { promises as fs } from "fs";
-import path from "path";
 import { randomUUID } from "crypto";
 import { MAX_TEMPLATES, type Template } from "./templates";
+import { getDb } from "./db.server.ts";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const FILE = path.join(DATA_DIR, "templates.json");
-
-export async function readTemplates(): Promise<Template[]> {
-  try {
-    const list = JSON.parse(await fs.readFile(FILE, "utf-8"));
-    return Array.isArray(list) ? (list as Template[]) : [];
-  } catch {
-    return [];
+export async function readTemplates(uid: string): Promise<Template[]> {
+  const rows = getDb()
+    .prepare("SELECT data_json FROM templates WHERE uid = ? ORDER BY created_at DESC")
+    .all(uid) as { data_json: string }[];
+  const list: Template[] = [];
+  for (const row of rows) {
+    try {
+      list.push(JSON.parse(row.data_json) as Template);
+    } catch {
+      // skip corrupt rows
+    }
   }
-}
-
-async function writeTemplates(list: Template[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(FILE, JSON.stringify(list, null, 2), "utf-8");
+  return list;
 }
 
 /** Insert (no id) or update (with id) one template. Newest first; capped at
  *  MAX_TEMPLATES by dropping the oldest. */
-export async function upsertTemplate(input: Omit<Template, "id" | "createdAt" | "updatedAt"> & { id?: string }): Promise<Template[]> {
-  const list = await readTemplates();
+export async function upsertTemplate(
+  uid: string,
+  input: Omit<Template, "id" | "createdAt" | "updatedAt"> & { id?: string },
+): Promise<Template[]> {
+  const db = getDb();
   const now = Date.now();
-  const existing = input.id ? list.find((t) => t.id === input.id) : undefined;
-  if (existing) {
-    Object.assign(existing, input, { updatedAt: now });
-  } else {
-    list.unshift({ ...input, id: randomUUID(), createdAt: now, updatedAt: now });
-  }
-  const capped = list.slice(0, MAX_TEMPLATES);
-  await writeTemplates(capped);
-  return capped;
+  db.transaction(() => {
+    const existingRow = input.id
+      ? (db.prepare("SELECT data_json, created_at FROM templates WHERE uid = ? AND id = ?").get(uid, input.id) as
+          | { data_json: string; created_at: number }
+          | undefined)
+      : undefined;
+    if (existingRow && input.id) {
+      const existing = JSON.parse(existingRow.data_json) as Template;
+      const merged: Template = { ...existing, ...input, id: input.id, updatedAt: now };
+      db.prepare("UPDATE templates SET data_json = ? WHERE uid = ? AND id = ?").run(
+        JSON.stringify(merged),
+        uid,
+        input.id,
+      );
+    } else {
+      const id = randomUUID();
+      const tpl: Template = { ...input, id, createdAt: now, updatedAt: now };
+      db.prepare("INSERT INTO templates (uid, id, data_json, created_at) VALUES (?, ?, ?, ?)").run(
+        uid,
+        id,
+        JSON.stringify(tpl),
+        now,
+      );
+      db.prepare(
+        `DELETE FROM templates WHERE uid = ? AND id NOT IN
+           (SELECT id FROM templates WHERE uid = ? ORDER BY created_at DESC LIMIT ?)`,
+      ).run(uid, uid, MAX_TEMPLATES);
+    }
+  })();
+  return readTemplates(uid);
 }
 
-export async function deleteTemplate(id: string): Promise<Template[]> {
-  const list = (await readTemplates()).filter((t) => t.id !== id);
-  await writeTemplates(list);
-  return list;
+export async function deleteTemplate(uid: string, id: string): Promise<Template[]> {
+  getDb().prepare("DELETE FROM templates WHERE uid = ? AND id = ?").run(uid, id);
+  return readTemplates(uid);
 }

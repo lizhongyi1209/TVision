@@ -51,15 +51,23 @@ export function SettingsPanel() {
   }
 
   async function save() {
+    // 令牌即身份：没填新令牌就没有可保存的东西（服务端会拒绝空 apiKey）。
+    if (!apiKey.trim()) {
+      showToast("success", "设置未变更");
+      return;
+    }
     setSaving(true);
     try {
-      const body: Record<string, unknown> = {};
-      if (apiKey.trim()) body.apiKey = apiKey.trim();
-      const r = await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }).then((x) => x.json());
+        body: JSON.stringify({ apiKey: apiKey.trim() }),
+      });
+      const r = await res.json();
+      if (!res.ok) {
+        showToast("error", (r as { error?: string }).error || "保存失败");
+        return;
+      }
       setSettings(r);
       showToast("success", "设置已保存");
     } catch {

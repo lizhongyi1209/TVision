@@ -7,16 +7,22 @@ import {
   resolveImageToDataUrl,
 } from "../vision.ts";
 
-test("workflow image inputs accept supported upload data URLs only", () => {
+test("workflow image inputs accept upload data URLs and own /api/media names", () => {
   const png = "data:image/png;base64,iVBORw0KGgo=";
   assert.equal(isSupportedImageDataUrl(png), true);
   assert.equal(isAllowedWorkflowImageSource(png), true);
-  assert.equal(isAllowedWorkflowImageSource("/api/media/job-1.png"), false);
-  assert.equal(isAllowedWorkflowImageSource("/api/media/job-1.webp?cache=1"), false);
+  // /api/media 名字现在允许进入校验（归属在解析时按 uid 再验一次）
+  assert.equal(isAllowedWorkflowImageSource("/api/media/job-1.png"), true);
+  assert.equal(isAllowedWorkflowImageSource("/api/media/job-1.webp?cache=1"), true);
   assert.equal(isAllowedWorkflowImageSource("https://example.com/image.png"), false);
   assert.equal(isAllowedWorkflowImageSource("/api/media/../secret.png"), false);
+  assert.equal(isAllowedWorkflowImageSource("/api/media/nested/evil.png"), false);
   assert.equal(isAllowedWorkflowImageSource("data:text/html;base64,PGgxPmJhZDwvaDE+"), false);
   assert.equal(isAllowedWorkflowImageSource("data:image/svg+xml;base64,PHN2Zy8+"), false);
+});
+
+test("local media resolution requires a tenant uid", async () => {
+  await assert.rejects(() => resolveImageToDataUrl("/api/media/job-1.png"), /找不到本地图片文件/);
 });
 
 test("remote image guard blocks private, link-local and documentation networks", () => {

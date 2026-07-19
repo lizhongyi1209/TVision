@@ -12,7 +12,10 @@ export const dynamic = "force-dynamic";
 // 的完整清单，客户端按模板 name 匹配（预设模板不在 templates.json 里，按名字
 // 匹配可以同时覆盖预设和用户模板）；GET ?t=<模板名>&f=<文件名> 流式返回图片。
 
-const MEDIA_DIR = path.join(process.cwd(), "data", "template-images");
+const MEDIA_DIR = path.join(
+  process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(process.cwd(), "data"),
+  "template-images",
+);
 const TYPES: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",

@@ -17,6 +17,7 @@ import { TopupModal } from "./TopupModal";
 
 export function UserChip() {
   const user = useAuth((s) => s.user);
+  const mode = useAuth((s) => s.mode);
   const logout = useAuth((s) => s.logout);
   const taskDirty = useTaskStore((s) => s.dirty);
   const openSettings = useStudio((s) => s.openSettings);
@@ -85,17 +86,20 @@ export function UserChip() {
               {quota !== null ? <p className="mt-1 text-xs text-accent">额度 ¥{quota}</p> : null}
             </div>
             <div className="my-1 h-px bg-line" />
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setTopupOpen(true);
-              }}
-              className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-white/[0.06] hover:text-fg"
-            >
-              <Icon name="Coins" size={15} />
-              充值
-            </button>
+            {/* 充值走上游账号 session，token 模式下不可用（代码保留，切回 login 模式恢复） */}
+            {mode === "login" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setTopupOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-white/[0.06] hover:text-fg"
+              >
+                <Icon name="Coins" size={15} />
+                充值
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -119,14 +123,14 @@ export function UserChip() {
             <button
               type="button"
               onClick={() => {
-                if (taskDirty && !window.confirm("当前任务流程有未保存修改，确定退出登录吗？")) return;
+                if (taskDirty && !window.confirm("当前任务流程有未保存修改，确定退出吗？")) return;
                 setOpen(false);
                 void logout();
               }}
               className="flex w-full items-center gap-2 rounded-[9px] px-2.5 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-white/[0.06] hover:text-fg"
             >
               <Icon name="Power" size={15} />
-              退出登录
+              {mode === "token" ? "退出（重贴令牌可恢复）" : "退出登录"}
             </button>
           </motion.div>
         ) : null}

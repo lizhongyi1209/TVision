@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
+import { LIMITS, rateLimit } from "@/lib/rateLimit.server";
 import { createWorkflowRunIfIdle, listWorkflowRunSummaries, readWorkflow } from "@/lib/workflowStore.server";
 import { ensureWorkflowRun } from "@/lib/workflowRunner.server";
 import { isAllowedWorkflowImageSource } from "@/lib/vision";
@@ -32,6 +33,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  if (!rateLimit("generate", auth.uid, LIMITS.GENERATE_PER_UID)) {
+    return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
   const text = await req.text();
   if (Buffer.byteLength(text, "utf-8") > MAX_RUN_REQUEST_BYTES) {
     return NextResponse.json({ error: "运行输入过大" }, { status: 413 });

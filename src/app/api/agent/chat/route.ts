@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuth, NEWAPI_BASE_URL, zhMessage } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { LIMITS, rateLimit } from "@/lib/rateLimit.server";
 import {
   agentProvider,
   buildReasoningParams,
@@ -30,8 +31,11 @@ const MAX_TOKENS = 8192;
 export async function POST(req: Request) {
   const auth = await getAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  if (!rateLimit("generate", auth.uid, LIMITS.GENERATE_PER_UID)) {
+    return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
 
-  const { apiKey } = await readSettings();
+  const { apiKey } = await readSettings(auth.uid);
   if (!apiKey) {
     return NextResponse.json({ error: "请先在用户菜单的「令牌设置」中填入 API 令牌" }, { status: 400 });
   }

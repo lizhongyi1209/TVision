@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { markJobDone, ownsJob } from "@/lib/jobRegistry.server";
 import { resolveBaseUrl } from "@/lib/o1key";
 import { extractGeneratedVideoUrl } from "@/lib/videoGateway";
 
@@ -138,7 +139,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ taskId: string
   const { taskId } = await ctx.params;
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  // 归属校验：不是本人提交的任务一律 404（与 jobs/[id] 一致）。
+  if (!ownsJob(auth.uid, taskId)) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+  const s = await readSettings(auth.uid);
   if (!s.apiKey) return NextResponse.json({ error: "未设置 API 令牌" }, { status: 400 });
 
   const baseUrl = resolveBaseUrl(s.route);
@@ -196,9 +199,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ taskId: string
   const progress  = Math.round(extractProgress(payload));
 
   if (FAILURE.has(rawStatus) || rawStatus.includes("fail") || rawStatus.includes("error")) {
+    markJobDone(auth.uid, taskId);
     return NextResponse.json({ status: "failed", progress, error: extractError(payload) });
   }
   if (SUCCESS.has(rawStatus)) {
+    markJobDone(auth.uid, taskId);
     const videoUrl = extractGeneratedVideoUrl(payload) ?? extractVideoUrl(payload);
     if (!videoUrl) {
       return NextResponse.json({ status: "failed", progress: 100, error: "成功但未返回视频 URL" });

@@ -10,10 +10,8 @@ export const VIDEO_MODEL_IDS: Record<VideoModel, string> = {
   "v3": "kling-v3",
   "v2-6": "kling-v2-6",
   "v3-omni": "kling-v3-omni",
-  // Keep UI labels stable while sending the model IDs used by the working
-  // ComfyUI Seedance integration.
-  "seedance-2.0": "doubao-seedance-2-0-260128",
-  "seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
+  "seedance-2.0": "seedance-2.0",
+  "seedance-2.0-fast": "seedance-2.0-fast",
 };
 
 const SEEDANCE_MODELS = new Set<VideoModel>(["seedance-2.0", "seedance-2.0-fast"]);
@@ -22,10 +20,13 @@ const MODEL_RESOLUTIONS: Record<VideoModel, readonly VideoResolution[]> = {
   "v3": ["720p", "1080p", "4K"],
   "v2-6": ["720p", "1080p"],
   "v3-omni": ["720p", "1080p", "4K"],
-  "seedance-2.0": ["480p", "720p", "1080p", "4K"],
-  "seedance-2.0-fast": ["480p", "720p"],
+  // seedance-2.0 支持到 4K；fast 仅 720p。
+  "seedance-2.0": ["720p", "1080p", "4K"],
+  "seedance-2.0-fast": ["720p"],
 };
 
+// 上游接入指南：ratio 可选 16:9 / 9:16 / 4:3 / 3:4 / 1:1（默认 16:9）。
+// 「智能」不是上游参数——表示不传 ratio 字段，让上游走默认。
 const SEEDANCE_RATIOS = new Set<AspectRatio>([
   "智能",
   "16:9",
@@ -33,7 +34,6 @@ const SEEDANCE_RATIOS = new Set<AspectRatio>([
   "1:1",
   "3:4",
   "9:16",
-  "21:9",
 ]);
 
 export function isSeedanceModel(model: string): model is SeedanceModel {
@@ -50,7 +50,8 @@ export function allowedVideoResolutions(model: VideoModel): readonly VideoResolu
 
 export function allowedVideoDurations(model: VideoModel): readonly number[] {
   if (model === "v2-6") return [5, 10];
-  if (isSeedanceModel(model)) return [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  // Seedance：4-15 秒整数。
+  if (isSeedanceModel(model)) return [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
   return [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 }
 
@@ -97,9 +98,10 @@ export function buildSeedanceGenerationBody(params: VideoJobParams): Record<stri
     throw new Error(`${params.model} 不支持 ${params.mode} 分辨率`);
   }
 
+  // Seedance：duration 为 4-15 秒的整数。
   const duration = params.duration ?? 5;
-  if (!Number.isInteger(duration) || (duration !== -1 && (duration < 4 || duration > 15))) {
-    throw new Error("Seedance 时长仅支持 4-15 秒的整数或自动");
+  if (!Number.isInteger(duration) || duration < 4 || duration > 15) {
+    throw new Error("Seedance 时长仅支持 4-15 秒的整数");
   }
 
   const ratio = params.aspectRatio ?? "智能";
@@ -118,7 +120,14 @@ export function buildSeedanceGenerationBody(params: VideoJobParams): Record<stri
     throw new Error("参考音频不能单独提交，请同时添加图片或视频");
   }
 
-  const images: { url: string; role: "first_frame" | "last_frame" | "reference_image" }[] = [];
+  // 火山方舟视频生成接入指南（/v1/video/generations，OpenAI 对齐格式）：
+  //   images — 图片参考数组，对象形式 { url, role }，role ∈
+  //            first_frame / last_frame / reference_image；
+  //   videos — 视频参考直链 URL 字符串数组（控制运动 / 镜头轨迹）；
+  //   audios — 音频参考直链 URL 字符串数组（声画融合）；
+  //   resolution / ratio / duration / camera_fixed / generate_audio /
+  //   web_search / seed — 顶层标量。
+  const images: Record<string, unknown>[] = [];
   if (firstUrl) images.push({ url: firstUrl, role: "first_frame" });
   if (lastUrl) images.push({ url: lastUrl, role: "last_frame" });
   for (const url of referenceUrls) images.push({ url, role: "reference_image" });
@@ -128,13 +137,17 @@ export function buildSeedanceGenerationBody(params: VideoJobParams): Record<stri
     prompt,
     resolution: params.mode === "4K" ? "4k" : params.mode,
     duration,
+    camera_fixed: params.cameraFixed === true,
     generate_audio: params.sound === true,
-    watermark: params.watermark === true,
     web_search: params.webSearch === true,
   };
-  const negativePrompt = (params.negativePrompt ?? "").trim();
-  if (negativePrompt) body.negative_prompt = negativePrompt;
+  // 「智能」表示不传 ratio，让上游按默认（16:9）处理。
   if (ratio !== "智能") body.ratio = ratio;
+  // seed 可选：仅在用户明确填写时透传。
+  if (params.seed !== undefined && params.seed !== null) {
+    if (!Number.isInteger(params.seed)) throw new Error("随机种子必须是整数");
+    body.seed = params.seed;
+  }
   if (images.length) body.images = images;
   if (videoUrls.length) body.videos = videoUrls;
   if (audioUrls.length) body.audios = audioUrls;

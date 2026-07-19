@@ -42,6 +42,10 @@ export interface VideoState {
   sound:          boolean;
   watermark:      boolean;
   webSearch:      boolean;
+  /** Seedance：锁定镜头（camera_fixed，静态视角，不运镜）。 */
+  cameraFixed:    boolean;
+  /** Seedance：随机种子输入框原文（空串 = 不传 seed）。 */
+  seedText:       string;
   aspectRatio:    AspectRatio;
   // 多段分镜
   shotsEnabled:   boolean;
@@ -84,6 +88,8 @@ export interface VideoState {
   setSound:        (b: boolean) => void;
   setWatermark:    (b: boolean) => void;
   setWebSearch:    (b: boolean) => void;
+  setCameraFixed:  (b: boolean) => void;
+  setSeedText:     (s: string) => void;
   setAspectRatio:  (r: AspectRatio) => void;
   toggleShots:     () => void;
   setShots:        (shots: ShotSegment[]) => void;
@@ -94,6 +100,8 @@ export interface VideoState {
   removeRefImage:  (index: number) => void;
   addRefVideo:     (f: LocalVideoAsset) => string | null;
   removeRefVideo:  (index: number) => void;
+  /** 用裁剪结果替换第 index 个参考视频（revoke 旧 preview）。返回错误信息或 null。 */
+  replaceRefVideo: (index: number, f: LocalVideoAsset) => string | null;
   addRefAudio:     (f: LocalVideoAsset) => string | null;
   removeRefAudio:  (index: number) => void;
   clearMediaInputs: () => void;
@@ -117,6 +125,8 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   sound:          false,
   watermark:      false,
   webSearch:      false,
+  cameraFixed:    false,
+  seedText:       "",
   aspectRatio:    DEFAULT_RATIO,
   shotsEnabled:   false,
   shots:          [],
@@ -157,6 +167,9 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   setSound:       (b) => set({ sound: b }),
   setWatermark:   (b) => set({ watermark: b }),
   setWebSearch:   (b) => set({ webSearch: b }),
+  setCameraFixed: (b) => set({ cameraFixed: b }),
+  // 只允许数字字符，避免提交时才报「种子必须是整数」。
+  setSeedText:    (s) => set({ seedText: s.replace(/[^\d]/g, "").slice(0, 10) }),
   setAspectRatio: (r) => set({ aspectRatio: r }),
   toggleShots:    () => set((s) => {
     if (!supportsShots(s.model)) return { shotsEnabled: false };
@@ -193,11 +206,11 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     revokePreview(s.refImages[i]?.previewUrl);
     return { refImages: s.refImages.filter((_, idx) => idx !== i) };
   }),
+  // 超长视频也允许进列表（用户用卡片上的裁剪按钮自行裁到需要的时长），
+  // 时长合规性（单段 2-15s、总长 ≤15s）在提交时统一校验。
   addRefVideo:    (f) => {
     const state = get();
     if (state.refVideos.length >= 3) return "参考视频最多 3 个";
-    const total = [...state.refVideos, f].reduce((sum, item) => sum + (item.duration ?? 0), 0);
-    if (total > 15.05) return "所有参考视频总时长不能超过 15 秒";
     set({ refVideos: [...state.refVideos, f] });
     return null;
   },
@@ -205,6 +218,13 @@ export const useVideoStore = create<VideoState>((set, get) => ({
     revokePreview(s.refVideos[i]?.previewUrl);
     return { refVideos: s.refVideos.filter((_, idx) => idx !== i) };
   }),
+  replaceRefVideo: (i, f) => {
+    const state = get();
+    if (!state.refVideos[i]) return "参考视频不存在";
+    revokePreview(state.refVideos[i].previewUrl);
+    set({ refVideos: state.refVideos.map((item, idx) => (idx === i ? f : item)) });
+    return null;
+  },
   addRefAudio:    (f) => {
     const state = get();
     if (state.refAudios.length >= 3) return "参考音频最多 3 段";

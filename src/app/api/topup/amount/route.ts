@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { NEWAPI_BASE_URL, requireAuth } from "@/lib/auth";
+import { AUTH_MODE, NEWAPI_BASE_URL, requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +10,7 @@ const PAYMENT_METHOD = "wxpay";
 // 代理 user/amount（问价）：这个接口不用 success 字段区分成败，靠 message 是否
 // 等于 "success"——失败时 data 本身就是中文提示，直接透传给前端当 error。
 export async function POST(req: Request) {
+  if (AUTH_MODE === "token") return NextResponse.json({ error: "在线充值暂不可用，请前往 o1key 官网充值" }, { status: 501 });
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
 

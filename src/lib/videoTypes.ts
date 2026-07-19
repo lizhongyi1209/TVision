@@ -25,6 +25,10 @@ export interface VideoJobParams {
   aspectRatio?:  AspectRatio;
   watermark?:    boolean;
   webSearch?:    boolean;
+  /** Seedance：是否锁定镜头（不使用运镜，静态视角拍摄）。 */
+  cameraFixed?:  boolean;
+  /** Seedance：随机种子（可选，整数）；不填由上游随机。 */
+  seed?:         number;
   /** 起始帧 public_url（已由 /api/video/upload 上传后得到）。 */
   imageUrl?:     string;
   /** 尾帧 public_url（可选）。 */

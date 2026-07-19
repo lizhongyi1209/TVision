@@ -26,6 +26,8 @@ const MODELS: { value: VideoModel; label: string; hint: string }[] = [
   { value: "seedance-2.0-fast", label: "Seedance 2.0 Fast", hint: "多模态 · 快速 · 最高 720p" },
 ];
 
+// 上游接入指南：Seedance ratio 可选 16:9 / 9:16 / 4:3 / 3:4 / 1:1；
+// 「智能」= 不传 ratio，由上游按默认处理。
 const SEEDANCE_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: "智能",  label: "智能" },
   { value: "16:9",  label: "16:9" },
@@ -33,7 +35,6 @@ const SEEDANCE_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: "1:1",   label: "1:1" },
   { value: "3:4",   label: "3:4" },
   { value: "9:16",  label: "9:16" },
-  { value: "21:9",  label: "21:9" },
 ];
 const OMNI_RATIOS = SEEDANCE_RATIOS.filter((option) => ["智能", "16:9", "9:16", "1:1"].includes(option.value));
 
@@ -120,8 +121,9 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
   const prompt       = useVideoStore((s) => s.prompt);
   const negPrompt    = useVideoStore((s) => s.negativePrompt);
   const sound        = useVideoStore((s) => s.sound);
-  const watermark    = useVideoStore((s) => s.watermark);
   const webSearch    = useVideoStore((s) => s.webSearch);
+  const cameraFixed  = useVideoStore((s) => s.cameraFixed);
+  const seedText     = useVideoStore((s) => s.seedText);
   const aspectRatio  = useVideoStore((s) => s.aspectRatio);
   const shotsEnabled = useVideoStore((s) => s.shotsEnabled);
 
@@ -131,8 +133,9 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
   const setPrompt      = useVideoStore((s) => s.setPrompt);
   const setNegPrompt   = useVideoStore((s) => s.setNegPrompt);
   const setSound       = useVideoStore((s) => s.setSound);
-  const setWatermark   = useVideoStore((s) => s.setWatermark);
   const setWebSearch   = useVideoStore((s) => s.setWebSearch);
+  const setCameraFixed = useVideoStore((s) => s.setCameraFixed);
+  const setSeedText    = useVideoStore((s) => s.setSeedText);
   const setAspectRatio = useVideoStore((s) => s.setAspectRatio);
   const toggleShots    = useVideoStore((s) => s.toggleShots);
 
@@ -182,7 +185,7 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
           <Select
             value={String(duration)}
             onChange={(v) => setDuration(Number(v))}
-            options={durOpts.map((d) => ({ value: String(d), label: d === -1 ? "自动" : `${d}s` }))}
+            options={durOpts.map((d) => ({ value: String(d), label: `${d}s` }))}
             className="w-[76px]"
           />
 
@@ -209,6 +212,8 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
             <Icon name={sound ? "SpeakerHigh" : "SpeakerX"} size={14} />
           </button>
 
+          {/* Seedance 专属：联网搜索 / 锁定镜头 / 随机种子。
+              上游参数字典没有水印开关，不再提供该按钮。 */}
           {isSeedance && (
             <>
               <button
@@ -224,15 +229,24 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
               </button>
               <button
                 type="button"
-                onClick={() => setWatermark(!watermark)}
-                title={watermark ? "AI 水印已开启" : "添加 AI 水印"}
+                onClick={() => setCameraFixed(!cameraFixed)}
+                title={cameraFixed ? "已锁定镜头（静态视角，点击恢复运镜）" : "锁定镜头（不使用运镜）"}
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-control border transition-colors",
-                  watermark ? "border-accent/60 bg-accent/10 text-accent" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
+                  cameraFixed ? "border-accent/60 bg-accent/10 text-accent" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
                 )}
               >
-                <Icon name="Sparkle" size={14} />
+                <Icon name={cameraFixed ? "VideoCameraSlash" : "VideoCamera"} size={14} />
               </button>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={seedText}
+                onChange={(e) => setSeedText(e.target.value)}
+                placeholder="种子"
+                title="随机种子（可选）：相同种子 + 相同参数可复现相近效果"
+                className="h-8 w-[72px] rounded-control border border-line bg-panel-2/60 px-2 text-center text-xs text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none"
+              />
             </>
           )}
 
@@ -252,18 +266,20 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
             </button>
           )}
 
-          {/* 负向提示词展开 */}
-          <button
-            type="button"
-            onClick={() => setShowNeg((v) => !v)}
-            className={cn(
-              "ml-auto flex h-8 items-center gap-1 rounded-control border px-2.5 text-xs transition-colors",
-              showNeg ? "border-line-2 text-fg" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
-            )}
-          >
-            <Icon name="Plus" size={12} />
-            负向
-          </button>
+          {/* 负向提示词展开（Seedance 上游无 negative_prompt 参数，不展示） */}
+          {!isSeedance && (
+            <button
+              type="button"
+              onClick={() => setShowNeg((v) => !v)}
+              className={cn(
+                "ml-auto flex h-8 items-center gap-1 rounded-control border px-2.5 text-xs transition-colors",
+                showNeg ? "border-line-2 text-fg" : "border-line text-fg-dim hover:border-line-2 hover:text-fg",
+              )}
+            >
+              <Icon name="Plus" size={12} />
+              负向
+            </button>
+          )}
         </div>
 
         {/* 提示词区 */}
@@ -281,7 +297,7 @@ export function VideoBar({ onGenerate, busy }: { onGenerate: () => void; busy: b
 
         {/* 负向提示词（可展开） */}
         <AnimatePresence>
-          {showNeg && (
+          {showNeg && !isSeedance && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { extractSessionCookie, NEWAPI_BASE_URL, setAuth, setPending2fa, zhMessage } from "@/lib/auth";
+import { AUTH_MODE, extractSessionCookie, NEWAPI_BASE_URL, setAuth, setPending2fa, zhMessage } from "@/lib/auth";
 import type { AuthUser } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -18,6 +18,7 @@ function needs2fa(message: unknown, data: unknown): boolean {
 }
 
 export async function POST(req: Request) {
+  if (AUTH_MODE === "token") return NextResponse.json({ error: "登录功能已停用，请直接填入 API 令牌" }, { status: 501 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const username = typeof body.username === "string" ? body.username.trim() : "";
   const password = typeof body.password === "string" ? body.password : "";

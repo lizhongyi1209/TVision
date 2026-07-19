@@ -1,50 +1,17 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
-import { readSettings } from "@/lib/settings";
-import { resolveBaseUrl, TASK_ENDPOINT } from "@/lib/o1key";
+import { probeApiKey } from "@/lib/probe.server";
+import { clientIp, LIMITS, rateLimit } from "@/lib/rateLimit.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Cheap connectivity + auth probe: query a nonexistent task id.
-// 401/403 => the token is rejected. Any other response => reachable and the
-// token was accepted. We cannot fully validate a key without spending credits,
-// so the UI states that key validity is confirmed on the first real generation.
+// 只测请求体里带的 key，绝不回退到任何已存储的 key —— 否则会变成
+// 「探测他人令牌是否有效」的预言机。进门前也要能测，所以无登录门禁。
 export async function POST(req: Request) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  if (!rateLimit("entry", clientIp(req), LIMITS.ENTRY_PER_IP)) {
+    return NextResponse.json({ ok: false, reachable: false, message: "尝试过于频繁，请稍后再试", baseUrl: "" }, { status: 429 });
+  }
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const s = await readSettings();
-
-  const apiKey = (typeof body.apiKey === "string" && body.apiKey.trim()) || s.apiKey;
-  const baseUrl = resolveBaseUrl(s.route);
-
-  if (!apiKey) {
-    return NextResponse.json({ ok: false, reachable: false, message: "未设置 API 令牌", baseUrl });
-  }
-
-  const url = `${baseUrl}${TASK_ENDPOINT}connectivity-probe-000`;
-  try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` } });
-    if (res.status === 401 || res.status === 403) {
-      return NextResponse.json({
-        ok: false,
-        reachable: true,
-        message: `令牌被拒绝 (HTTP ${res.status})，请检查 o1key 令牌是否正确`,
-        baseUrl,
-      });
-    }
-    return NextResponse.json({
-      ok: true,
-      reachable: true,
-      message: "测试成功！",
-      baseUrl,
-    });
-  } catch (e) {
-    return NextResponse.json({
-      ok: false,
-      reachable: false,
-      message: `无法连接 ${baseUrl}：${(e as Error)?.message || e}。请检查网络。`,
-      baseUrl,
-    });
-  }
+  const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  return NextResponse.json(await probeApiKey(apiKey));
 }

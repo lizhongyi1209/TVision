@@ -20,6 +20,7 @@ import {
   SpeakerHigh,
   SpeakerX,
   VideoCamera,
+  VideoCameraSlash,
   CaretLeft,
   CaretRight,
   CaretUp,
@@ -140,6 +141,7 @@ const MAP: Record<string, ComponentType<IconProps>> = {
   SpeakerHigh,
   SpeakerX,
   VideoCamera,
+  VideoCameraSlash,
 } as unknown as Record<string, ComponentType<IconProps>>;
 
 export function Icon({

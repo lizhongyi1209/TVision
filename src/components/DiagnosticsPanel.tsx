@@ -170,7 +170,7 @@ export function DiagnosticsPanel() {
           {entries.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-fg-mute">
               <Icon name="Pulse" size={28} />
-              <span className="text-sm">暂无日志，生成图片时的运行记录和报错会出现在这里</span>
+              <span className="text-sm">暂无日志，生成图片 / 视频时的运行记录和报错会出现在这里</span>
             </div>
           ) : (
             ordered.map((e) => <LogRow key={e.id} entry={e} />)

@@ -1,0 +1,10 @@
+# DOMAIN 来自 docker-compose 的环境变量；localhost 时 Caddy 用自签证书。
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:3000
+
+	# 生成图上传体积较大，放宽请求体
+	request_body {
+		max_size 120MB
+	}
+}

@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { LIMITS, rateLimit } from "@/lib/rateLimit.server";
 import { resolveBaseUrl } from "@/lib/o1key";
 import { MediaValidationError, uploadMediaFile } from "@/lib/mediaUpload.server";
 
@@ -13,7 +14,10 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  if (!rateLimit("upload", auth.uid, LIMITS.UPLOAD_PER_UID)) {
+    return NextResponse.json({ error: "上传过于频繁，请稍后再试" }, { status: 429 });
+  }
+  const s = await readSettings(auth.uid);
   if (!s.apiKey) return NextResponse.json({ error: "未设置 API 令牌" }, { status: 400 });
 
   const formData = await req.formData().catch(() => null);
@@ -31,7 +35,9 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "素材上传失败";
-    const status = error instanceof MediaValidationError ? 400 : 502;
+    // 500 而不是 502：站点在 Cloudflare 后面，源站 502/504 会被 CF 换成
+    // HTML 错误页，前端拿不到 JSON 错误信息（表现为 Unexpected token '<'）。
+    const status = error instanceof MediaValidationError ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

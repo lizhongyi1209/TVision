@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
-import { promises as fs } from "fs";
-import path from "path";
 import { appendMeta } from "./historyMeta.ts";
+import { ownsAsset, putObject, registerAsset } from "./storage.server.ts";
 import {
   buildGptImageSubmitBody,
   buildModelId,
@@ -44,7 +43,6 @@ import {
   WorkflowRunLeaseLostError,
 } from "./workflowStore.server.ts";
 
-const OUTPUT_DIR = path.join(process.cwd(), "output");
 const POLL_INTERVAL_MS = 2_000;
 const DEFAULT_MAX_POLL_MS = 12 * 60_000;
 const MIN_MAX_POLL_MS = 60_000;
@@ -131,9 +129,9 @@ async function executeReverseNode(ctx: MutableRunContext, node: Extract<Workflow
   step.inputs = undefined;
   await persist(ctx);
 
-  const settings = await readSettings();
+  const settings = await readSettings(ctx.ownerId);
   if (!settings.apiKey) throw new WorkflowStepError("未设置 API 令牌，请先在设置中填入 o1key 令牌");
-  const dataUrl = await resolveImageToDataUrl(source.value as string);
+  const dataUrl = await resolveImageToDataUrl(source.value as string, ctx.ownerId);
   const bytes = Buffer.byteLength(dataUrl, "utf-8");
   if (bytes > MAX_BODY_BYTES) {
     throw new WorkflowStepError(`反推图片 ${(bytes / 1e6).toFixed(1)}MB 超过 20MB 上限`);
@@ -166,14 +164,9 @@ async function executePromptNode(ctx: MutableRunContext, node: Extract<WorkflowN
   return { text: { type: "text", value: text } };
 }
 
-async function findExisting(nameNoExt: string): Promise<string | null> {
+function findExisting(ownerId: string, nameNoExt: string): string | null {
   for (const ext of [".png", ".jpg", ".webp"]) {
-    try {
-      await fs.access(path.join(OUTPUT_DIR, nameNoExt + ext));
-      return nameNoExt + ext;
-    } catch {
-      // Keep looking.
-    }
+    if (ownsAsset(ownerId, nameNoExt + ext)) return nameNoExt + ext;
   }
   return null;
 }
@@ -185,12 +178,11 @@ async function saveResultImages(
   apiKey: string,
   embedded: ReturnType<typeof buildEmbeddedMeta>,
 ): Promise<string[]> {
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
   const scopedTaskId = workflowAssetStem(ownerId, taskId);
   const saved: string[] = [];
   for (let index = 0; index < images.length; index++) {
     const nameNoExt = `${scopedTaskId}${images.length > 1 ? `--img${index}` : ""}`;
-    const existing = await findExisting(nameNoExt);
+    const existing = findExisting(ownerId, nameNoExt);
     if (existing) {
       saved.push(`/api/media/${existing}`);
       continue;
@@ -204,7 +196,8 @@ async function saveResultImages(
         // Metadata is best-effort; preserving the generated image wins.
       }
       const filename = `${nameNoExt}${fetched.ext}`;
-      await fs.writeFile(path.join(OUTPUT_DIR, filename), bytes);
+      await putObject(ownerId, filename, bytes);
+      registerAsset(ownerId, filename, "image", bytes.length);
       saved.push(`/api/media/${filename}`);
     } catch {
       if (images[index].kind === "url") saved.push(images[index].value);
@@ -336,11 +329,11 @@ async function executeImageNode(ctx: MutableRunContext, node: WorkflowImageNode)
   step.submissionErrors ||= [];
   await persist(ctx);
 
-  const settings = await readSettings();
+  const settings = await readSettings(ctx.ownerId);
   if (!settings.apiKey) throw new WorkflowStepError("未设置 API 令牌，请先在设置中填入 o1key 令牌");
   const baseUrl = resolveBaseUrl(settings.route);
   const prompt = promptValue.value as string;
-  const images = await Promise.all(rawImages.map((image) => resolveImageToDataUrl(image)));
+  const images = await Promise.all(rawImages.map((image) => resolveImageToDataUrl(image, ctx.ownerId)));
   const modelId = buildModelId(node.config.model, node.config.resolution, node.config.billing);
   const submitBody = isGptImage2(node.config.model)
     ? buildGptImageSubmitBody({
@@ -384,6 +377,7 @@ async function executeImageNode(ctx: MutableRunContext, node: WorkflowImageNode)
       await persist(ctx);
       const encodedTaskId = encodeWorkflowTaskId(taskId);
       await appendMeta(
+        ctx.ownerId,
         encodedTaskId === taskId ? [taskId] : [taskId, encodedTaskId],
         imageNodeMeta(ctx, node, prompt, referenceImages.length),
       );

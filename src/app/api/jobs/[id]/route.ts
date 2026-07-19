@@ -1,27 +1,20 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { readMetaMap } from "@/lib/historyMeta";
+import { markJobDone, ownsJob } from "@/lib/jobRegistry.server";
 import { fetchResultBytes, pollTaskOnce, resolveBaseUrl } from "@/lib/o1key";
 import { embedImageText, PNG_META_KEYWORD } from "@/lib/pngMeta";
+import { ownsAsset, putObject, registerAsset } from "@/lib/storage.server";
 import { buildEmbeddedMeta } from "@/lib/templates";
 import type { JobStatusResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OUTPUT_DIR = path.join(process.cwd(), "output");
-
-async function findExisting(nameNoExt: string): Promise<string | null> {
+function findExisting(uid: string, nameNoExt: string): string | null {
   for (const ext of [".png", ".jpg", ".webp"]) {
-    try {
-      await fs.access(path.join(OUTPUT_DIR, nameNoExt + ext));
-      return nameNoExt + ext;
-    } catch {
-      // keep looking
-    }
+    if (ownsAsset(uid, nameNoExt + ext)) return nameNoExt + ext;
   }
   return null;
 }
@@ -32,7 +25,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  // 上游 taskId 谁知道谁就能查——先验归属，不是本人提交的任务一律 404。
+  if (!ownsJob(auth.uid, id)) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
+  const s = await readSettings(auth.uid);
 
   const fail = (error: string): JobStatusResponse => ({ id, status: "failed", progress: null, images: [], error });
   if (!s.apiKey) return NextResponse.json(fail("未设置 API 令牌"));
@@ -42,16 +37,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const poll = await pollTaskOnce(baseUrl, s.apiKey, id);
 
     if (poll.status === "success") {
-      await fs.mkdir(OUTPUT_DIR, { recursive: true });
       // Generation params for this job (history sidecar) — embedded into the
       // image itself (PNG iTXt / JPEG COM, see pngMeta.ts) so the file
       // carries its own recipe: dropping it back onto the canvas restores
       // these settings without needing the sidecar. Best-effort: webp skips.
-      const genMeta = (await readMetaMap())[id];
+      const genMeta = (await readMetaMap(auth.uid))[id];
       const saved: string[] = [];
       for (let i = 0; i < poll.images.length; i++) {
         const nameNoExt = `${id}${poll.images.length > 1 ? `_${i}` : ""}`;
-        const existing = await findExisting(nameNoExt);
+        const existing = findExisting(auth.uid, nameNoExt);
         if (existing) {
           saved.push(`/api/media/${existing}`);
           continue;
@@ -68,17 +62,20 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
             }
           }
           const fname = `${nameNoExt}${ext}`;
-          await fs.writeFile(path.join(OUTPUT_DIR, fname), bytes);
+          await putObject(auth.uid, fname, bytes);
+          registerAsset(auth.uid, fname, "image", bytes.length);
           saved.push(`/api/media/${fname}`);
         } catch {
           if (poll.images[i].kind === "url") saved.push(poll.images[i].value); // fallback to upstream URL
         }
       }
+      markJobDone(auth.uid, id);
       const res: JobStatusResponse = { id, status: "success", progress: 1, images: saved };
       return NextResponse.json(res);
     }
 
     if (poll.status === "failed") {
+      markJobDone(auth.uid, id);
       return NextResponse.json(fail(poll.error || "生成失败"));
     }
 

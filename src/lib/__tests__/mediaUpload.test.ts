@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildPresignedUploadHeaders, parsePresignResult, validateMediaSignature } from "../mediaUpload.server.ts";
+import { buildPresignedUploadHeaders, detectContentType, parsePresignResult, validateMediaSignature } from "../mediaUpload.server.ts";
 
 test("parsePresignResult supports nested result and camelCase fields", () => {
   assert.deepEqual(parsePresignResult({
@@ -53,4 +53,15 @@ test("media signature validation rejects a renamed arbitrary file", () => {
     Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]),
     "video/mp4",
   ));
+});
+
+test("detectContentType sniffs the real format of mislabeled files", () => {
+  // 实测场景：生成图下载件命名为 .png，内容实为 JPEG（ffd8ffe0...4a464946）
+  assert.equal(detectContentType(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01])), "image/jpeg");
+  assert.equal(detectContentType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "image/png");
+  // mediabunny 裁剪产物：ftyp + isom brand
+  assert.equal(detectContentType(Buffer.from([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d])), "video/mp4");
+  // HEIC 同为 ftyp，但 brand 是 heic
+  assert.equal(detectContentType(Buffer.from([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63])), "image/heic");
+  assert.equal(detectContentType(Buffer.from("random garbage")), null);
 });

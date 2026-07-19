@@ -11,12 +11,14 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useStudio } from "@/lib/store";
+import { diag } from "@/lib/logStore";
 import { useVideoStore, type FrameMode } from "@/lib/videoStore";
 import { isSeedanceModel, maxReferenceImages, supportsReferenceMedia } from "@/lib/videoGateway";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Segmented } from "./ui";
 import { VideoBar } from "./VideoBar";
+import { VideoTrimPanel } from "./VideoTrimPanel";
 
 const SUPPORTED_IMAGE_FILE = /\.(jpe?g|png|webp|bmp|tiff?|gif|heic|heif)$/i;
 
@@ -152,11 +154,14 @@ function ReferenceMediaSection({
   items,
   onAdd,
   onRemove,
+  onTrim,
 }: {
   kind: "video" | "audio";
   items: { previewUrl: string; file: File; duration: number | null }[];
   onAdd: (file: File) => void;
   onRemove: (index: number) => void;
+  /** 仅视频：打开快速裁剪面板。 */
+  onTrim?: (index: number) => void;
 }) {
   const isVideo = kind === "video";
   const label = isVideo ? "参考视频" : "参考音频";
@@ -170,7 +175,8 @@ function ReferenceMediaSection({
         {items.map((item, index) => (
           <div key={`${item.file.name}-${index}`} className="group relative overflow-hidden rounded-control border border-line bg-panel-2">
             {isVideo ? (
-              <video src={item.previewUrl} controls muted preload="metadata" className="block max-h-28 w-full bg-black object-contain" />
+              // 正方形卡片：视频 object-contain 居中，上下留黑边，四角有足够空间放按钮
+              <video src={item.previewUrl} controls muted preload="metadata" className="block aspect-square w-full bg-black object-contain" />
             ) : (
               <div className="flex flex-col gap-2 px-2.5 pb-2.5 pt-8">
                 <div className="flex min-w-0 items-center gap-2">
@@ -180,17 +186,36 @@ function ReferenceMediaSection({
                 <audio src={item.previewUrl} controls preload="metadata" className="h-8 w-full" />
               </div>
             )}
-            <span className="absolute left-1.5 top-1.5 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] text-fg">
+            <span className={cn(
+              "absolute left-1.5 top-1.5 rounded-full px-1.5 py-0.5 text-[9px]",
+              isVideo && (item.duration ?? 0) > 15.05
+                ? "bg-red-500/80 text-white"
+                : "bg-black/70 text-fg",
+            )}>
               {isVideo ? "视频" : "音频"} {index + 1}{item.duration == null ? "" : ` · ${item.duration.toFixed(1)}s`}
+              {isVideo && (item.duration ?? 0) > 15.05 ? " · 需裁剪" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => onRemove(index)}
-              className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-fg-dim transition-colors hover:text-red-300"
-              title={`移除${label}`}
-            >
-              <Icon name="X" size={10} />
-            </button>
+            <div className="absolute right-1.5 top-1.5 flex items-center gap-1.5">
+              {isVideo && onTrim && (
+                <button
+                  type="button"
+                  onClick={() => onTrim(index)}
+                  className="flex h-6 items-center gap-1 rounded-full bg-black/70 px-2 text-[10px] text-fg transition-colors hover:bg-accent/80 hover:text-white"
+                  title="裁剪时长"
+                >
+                  <Icon name="Scissors" size={11} />
+                  裁剪
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onRemove(index)}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-fg-dim transition-colors hover:text-red-300"
+                title={`移除${label}`}
+              >
+                <Icon name="X" size={11} />
+              </button>
+            </div>
           </div>
         ))}
         {items.length < 3 && (
@@ -336,6 +361,8 @@ export function VideoTaskPoller() {
   const sound = useVideoStore((s) => s.sound);
   const watermark = useVideoStore((s) => s.watermark);
   const webSearch = useVideoStore((s) => s.webSearch);
+  const cameraFixed = useVideoStore((s) => s.cameraFixed);
+  const seedText = useVideoStore((s) => s.seedText);
   const aspectRatio = useVideoStore((s) => s.aspectRatio);
   const frameMode = useVideoStore((s) => s.frameMode);
   const setProgress = useVideoStore((s) => s.setProgress);
@@ -379,6 +406,8 @@ export function VideoTaskPoller() {
                   sound,
                   watermark,
                   webSearch,
+                  cameraFixed,
+                  seed: seedText ? Number(seedText) : undefined,
                   aspectRatio,
                   frameMode,
                   createdAt: Date.now(),
@@ -386,21 +415,28 @@ export function VideoTaskPoller() {
               }),
             }).then((result) => result.json());
             if (saved.localUrl) playUrl = saved.localUrl;
-          } catch { /* 保存失败仍可播放远端直链 */ }
+            if (saved.error) diag("warn", "视频轮询", "结果保存到 output 失败，仅远端直链可用", String(saved.error));
+          } catch (e) {
+            /* 保存失败仍可播放远端直链 */
+            diag("warn", "视频轮询", "结果保存请求失败，仅远端直链可用", (e as Error)?.message || String(e));
+          }
           if (cancelled) return;
           setSuccess(res.videoUrl, playUrl);
+          diag("info", "视频轮询", "生成完成", `任务 ID: ${taskId}\n视频 URL: ${res.videoUrl}`);
           showToast("success", "视频生成完成，已保存到 output 目录，可在「历史生成」中查看");
           return;
         }
         if (res.status === "failed") {
           if (cancelled) return;
           setError(res.error ?? "生成失败");
+          diag("error", "视频轮询", "生成失败", `任务 ID: ${taskId}\n${res.error ?? "生成失败"}`);
           showToast("error", res.error ?? "视频生成失败");
           return;
         }
         setProgress(res.progress ?? 0);
-      } catch {
+      } catch (e) {
         // 短暂网络故障保持任务状态，下轮继续。
+        diag("warn", "视频轮询", "状态查询失败，下轮重试", `任务 ID: ${taskId}\n${(e as Error)?.message || String(e)}`);
       }
       if (!cancelled) schedule();
     };
@@ -412,8 +448,8 @@ export function VideoTaskPoller() {
     };
   }, [
     phase, taskId, model, mode, duration, prompt, negPrompt, shotsEnabled, shots,
-    sound, watermark, webSearch, aspectRatio, frameMode, setProgress, setSuccess,
-    setError, showToast,
+    sound, watermark, webSearch, cameraFixed, seedText, aspectRatio, frameMode,
+    setProgress, setSuccess, setError, showToast,
   ]);
 
   return null;
@@ -441,6 +477,8 @@ export function VideoWorkshop() {
   const sound      = useVideoStore((s) => s.sound);
   const watermark  = useVideoStore((s) => s.watermark);
   const webSearch  = useVideoStore((s) => s.webSearch);
+  const cameraFixed = useVideoStore((s) => s.cameraFixed);
+  const seedText   = useVideoStore((s) => s.seedText);
   const aspectRatio = useVideoStore((s) => s.aspectRatio);
   const shotsEnabled = useVideoStore((s) => s.shotsEnabled);
   const shots      = useVideoStore((s) => s.shots);
@@ -458,6 +496,7 @@ export function VideoWorkshop() {
   const removeRefImage = useVideoStore((s) => s.removeRefImage);
   const addRefVideo   = useVideoStore((s) => s.addRefVideo);
   const removeRefVideo = useVideoStore((s) => s.removeRefVideo);
+  const replaceRefVideo = useVideoStore((s) => s.replaceRefVideo);
   const addRefAudio   = useVideoStore((s) => s.addRefAudio);
   const removeRefAudio = useVideoStore((s) => s.removeRefAudio);
   const beginUpload   = useVideoStore((s) => s.beginUpload);
@@ -465,6 +504,15 @@ export function VideoWorkshop() {
   const setRunning    = useVideoStore((s) => s.setRunning);
   const setError      = useVideoStore((s) => s.setError);
   const resetTask     = useVideoStore((s) => s.resetTask);
+
+  // 参考视频裁剪面板（PLAN-VIDEO-TRIM）。replaceIndex 为 null 时裁完新增，
+  // 否则替换 refVideos[replaceIndex]（卡片上的裁剪按钮入口）。
+  const [trimTarget, setTrimTarget] = useState<{
+    file: File;
+    previewUrl: string;
+    duration: number;
+    replaceIndex: number | null;
+  } | null>(null);
 
   // 图片 / 视频 / 音频统一走预签名上传，返回生成接口可访问的公网 URL。
   async function uploadAsset(file: File): Promise<string> {
@@ -502,9 +550,28 @@ export function VideoWorkshop() {
       showToast("error", "参考音频不能单独使用，请同时添加参考图片或参考视频");
       return;
     }
+    // 参考视频时长在提交时统一校验（添加时不拦截，用户可用卡片上的裁剪按钮裁到需要的时长）
+    if (isSeedance && !useFrames && refVideos.length) {
+      const over = refVideos.findIndex((v) => (v.duration ?? 0) > 15.05);
+      if (over >= 0) {
+        showToast("error", `参考视频 ${over + 1} 超过 15 秒，请点击卡片上的裁剪按钮裁剪`);
+        return;
+      }
+      const total = refVideos.reduce((sum, v) => sum + (v.duration ?? 0), 0);
+      if (total > 15.05) {
+        showToast("error", `所有参考视频总时长不能超过 15 秒（当前 ${total.toFixed(1)}s），请裁剪后提交`);
+        return;
+      }
+    }
 
     resetTask();
     beginUpload();
+    diag(
+      "info",
+      "视频提交",
+      `开始生成（${model} · ${mode} · ${duration}s）`,
+      JSON.stringify({ model, mode, duration, aspectRatio, sound, webSearch, shotsEnabled }, null, 2),
+    );
 
     try {
       let imageUrl = "";
@@ -524,6 +591,8 @@ export function VideoWorkshop() {
           for (const ref of refAudios) audioUrls.push(await uploadAsset(ref.file));
         }
       }
+      const assetCount = [imageUrl, tailUrl].filter(Boolean).length + refUrls.length + videoUrls.length + audioUrls.length;
+      if (assetCount) diag("info", "视频提交", `素材上传完成，共 ${assetCount} 个`);
 
       beginSubmit();
       const res = await fetch("/api/video/jobs", {
@@ -532,6 +601,8 @@ export function VideoWorkshop() {
         body: JSON.stringify({
           model, mode, duration, prompt, negativePrompt: negPrompt, sound, aspectRatio,
           watermark, webSearch,
+          cameraFixed: isSeedance ? cameraFixed : undefined,
+          seed: isSeedance && seedText ? Number(seedText) : undefined,
           imageUrl: imageUrl || undefined,
           tailUrl:  tailUrl  || undefined,
           refUrls:  refUrls.length ? refUrls : undefined,
@@ -541,10 +612,17 @@ export function VideoWorkshop() {
         }),
       }).then((r) => r.json());
 
-      if (res.error) { setError(res.error); showToast("error", res.error); return; }
+      if (res.error) {
+        setError(res.error);
+        diag("error", "视频提交", "提交失败", res.error);
+        showToast("error", res.error);
+        return;
+      }
+      diag("info", "视频提交", "任务已创建", `任务 ID: ${res.taskId}`);
       setRunning(res.taskId);
     } catch (e) {
       setError((e as Error).message);
+      diag("error", "视频提交", "提交失败，请检查网络", (e as Error)?.message || String(e));
       showToast("error", (e as Error).message ?? "提交失败");
     }
   }
@@ -597,11 +675,8 @@ export function VideoWorkshop() {
     let meta: { duration: number; width: number; height: number } | null = null;
     try {
       meta = await readMediaMetadata(previewUrl, "video");
-      if (!Number.isFinite(meta.duration) || meta.duration < 2 || meta.duration > 15) {
-        throw new Error("单个参考视频时长必须在 2-15 秒之间");
-      }
-      if (refVideos.reduce((sum, item) => sum + (item.duration ?? 0), 0) + meta.duration > 15.05) {
-        throw new Error("所有参考视频总时长不能超过 15 秒");
+      if (!Number.isFinite(meta.duration) || meta.duration < 2) {
+        throw new Error("单个参考视频时长不能少于 2 秒");
       }
       const ratio = meta.height ? meta.width / meta.height : 0;
       if (meta.width < 300 || meta.height < 300 || meta.width > 6000 || meta.height > 6000 || ratio < 0.4 || ratio > 2.5) {
@@ -662,6 +737,48 @@ export function VideoWorkshop() {
     const item = refVideos[index];
     if (item) URL.revokeObjectURL(item.previewUrl);
     removeRefVideo(index);
+  }
+
+  // 卡片上的「裁剪」按钮：对已添加的参考视频二次裁剪，裁完原位替换
+  function handleTrimReferenceVideo(index: number) {
+    const item = refVideos[index];
+    if (!item) return;
+    setTrimTarget({
+      file: item.file,
+      previewUrl: item.previewUrl,
+      duration: item.duration ?? 15,
+      replaceIndex: index,
+    });
+  }
+
+  function closeTrimPanel() {
+    if (!trimTarget) return;
+    // 新增入口的 previewUrl 是裁剪面板临时建的，关掉要回收；
+    // 替换入口复用卡片的 previewUrl，revoke 会弄坏列表里的预览。
+    if (trimTarget.replaceIndex == null) URL.revokeObjectURL(trimTarget.previewUrl);
+    setTrimTarget(null);
+  }
+
+  async function handleTrimDone(trimmed: File) {
+    if (!trimTarget) return;
+    const replaceIndex = trimTarget.replaceIndex;
+    const previewUrl = URL.createObjectURL(trimmed);
+    try {
+      const meta = await readMediaMetadata(previewUrl, "video");
+      const ratio = meta.height ? meta.width / meta.height : 0;
+      if (meta.width < 300 || meta.height < 300 || meta.width > 6000 || meta.height > 6000 || ratio < 0.4 || ratio > 2.5) {
+        throw new Error("参考视频尺寸需为 300-6000px，宽高比需在 0.4-2.5 之间");
+      }
+      const asset = { file: trimmed, previewUrl, duration: meta.duration };
+      const addError = replaceIndex == null ? addRefVideo(asset) : replaceRefVideo(replaceIndex, asset);
+      if (addError) throw new Error(addError);
+      showToast("success", `裁剪完成 · ${meta.duration.toFixed(1)}s`);
+      closeTrimPanel();
+    } catch (error) {
+      URL.revokeObjectURL(previewUrl);
+      showToast("error", error instanceof Error ? error.message : "视频裁剪失败");
+      closeTrimPanel();
+    }
   }
 
   function handleRemoveReferenceAudio(index: number) {
@@ -768,6 +885,7 @@ export function VideoWorkshop() {
                     items={refVideos}
                     onAdd={handleReferenceVideo}
                     onRemove={handleRemoveReferenceVideo}
+                    onTrim={handleTrimReferenceVideo}
                   />
                   <ReferenceMediaSection
                     kind="audio"
@@ -814,6 +932,21 @@ export function VideoWorkshop() {
 
       {/* 底部生成栏 */}
       <VideoBar onGenerate={generate} busy={busy} />
+
+      {/* 参考视频快速裁剪 */}
+      <AnimatePresence>
+        {trimTarget && (
+          <VideoTrimPanel
+            key={trimTarget.previewUrl}
+            file={trimTarget.file}
+            previewUrl={trimTarget.previewUrl}
+            duration={trimTarget.duration}
+            onDone={handleTrimDone}
+            onCancel={closeTrimPanel}
+            onError={(message) => showToast("error", message)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

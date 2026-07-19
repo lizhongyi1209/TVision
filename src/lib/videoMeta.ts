@@ -1,32 +1,40 @@
-// Server-side sidecar for generated videos: data/video-meta.json maps
-// taskId → VideoMeta, so HistoryPage can restore params when a video card
-// is clicked. Mirrors the pattern in historyMeta.ts.
+// Server-side sidecar for generated videos: video_meta table maps
+// (uid, taskId) → VideoMeta, so HistoryPage can restore params when a video
+// card is clicked. Mirrors the pattern in historyMeta.ts; per-tenant.
 
-import { promises as fs } from "fs";
-import path from "path";
 import type { VideoMeta } from "./types";
+import { getDb } from "./db.server.ts";
 
-const DATA_DIR  = path.join(process.cwd(), "data");
-const META_PATH = path.join(DATA_DIR, "video-meta.json");
 const MAX_ENTRIES = 200;
 
-export async function readVideoMetaMap(): Promise<Record<string, VideoMeta>> {
-  try {
-    return JSON.parse(await fs.readFile(META_PATH, "utf-8")) as Record<string, VideoMeta>;
-  } catch {
-    return {};
+export async function readVideoMetaMap(uid: string): Promise<Record<string, VideoMeta>> {
+  const rows = getDb()
+    .prepare("SELECT task_id, meta_json FROM video_meta WHERE uid = ?")
+    .all(uid) as { task_id: string; meta_json: string }[];
+  const map: Record<string, VideoMeta> = {};
+  for (const row of rows) {
+    try {
+      map[row.task_id] = JSON.parse(row.meta_json) as VideoMeta;
+    } catch {
+      // skip corrupt rows
+    }
   }
+  return map;
 }
 
-export async function appendVideoMeta(meta: VideoMeta): Promise<void> {
+export async function appendVideoMeta(uid: string, meta: VideoMeta): Promise<void> {
   try {
-    const map = await readVideoMetaMap();
-    map[meta.taskId] = meta;
-    const entries = Object.entries(map)
-      .sort((a, b) => b[1].createdAt - a[1].createdAt)
-      .slice(0, MAX_ENTRIES);
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(META_PATH, JSON.stringify(Object.fromEntries(entries), null, 2), "utf-8");
+    const db = getDb();
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO video_meta (uid, task_id, meta_json, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(uid, task_id) DO UPDATE SET meta_json = excluded.meta_json, created_at = excluded.created_at`,
+      ).run(uid, meta.taskId, JSON.stringify(meta), meta.createdAt);
+      db.prepare(
+        `DELETE FROM video_meta WHERE uid = ? AND task_id NOT IN
+           (SELECT task_id FROM video_meta WHERE uid = ? ORDER BY created_at DESC LIMIT ?)`,
+      ).run(uid, uid, MAX_ENTRIES);
+    })();
   } catch {
     // best-effort; never block on it
   }

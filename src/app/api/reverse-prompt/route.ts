@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { LIMITS, rateLimit } from "@/lib/rateLimit.server";
 import { MAX_BODY_BYTES, resolveBaseUrl } from "@/lib/o1key";
 import { normalizeVisionPrompt, resolveImageToDataUrl, reverseEngineerPrompt, VisionError } from "@/lib/vision";
 
@@ -13,8 +14,12 @@ export const dynamic = "force-dynamic";
 // is created here; that only happens once the user reviews the prompt and
 // clicks 生成 themselves.
 export async function POST(req: Request) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  if (!rateLimit("generate", auth.uid, LIMITS.GENERATE_PER_UID)) {
+    return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
+  const s = await readSettings(auth.uid);
   if (!s.apiKey) {
     return NextResponse.json({ error: "未设置 API 令牌，请先在设置中填入 o1key 令牌" }, { status: 400 });
   }
@@ -25,7 +30,7 @@ export async function POST(req: Request) {
 
   let dataUrl: string;
   try {
-    dataUrl = await resolveImageToDataUrl(image);
+    dataUrl = await resolveImageToDataUrl(image, auth.uid);
   } catch (e) {
     return NextResponse.json({ error: (e as Error)?.message || "读取图片失败" }, { status: 400 });
   }

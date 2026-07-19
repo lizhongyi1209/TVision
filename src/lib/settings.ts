@@ -1,13 +1,11 @@
-// Server-side settings persistence to data/settings.json (gitignored).
-// The API token lives here, on the local machine, never shipped to the browser.
+// Per-tenant settings. The API token lives in the tenants table (encrypted,
+// see tenant.server.ts) — one per user, keyed by uid — instead of the old
+// single data/settings.json shared by the whole deployment. Function names
+// kept, a `uid` first param threaded through every call site.
 
-import { promises as fs } from "fs";
-import path from "path";
-import type { PublicSettings, Settings } from "./types";
+import type { PublicSettings, Settings, SettingsDefaults } from "./types";
 import { DEFAULT_ROUTE } from "./o1key.ts";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
+import { getTenantApiKey, readTenantDefaults, writeTenantDefaults } from "./tenant.server.ts";
 
 const DEFAULTS: Settings = {
   apiKey: "",
@@ -15,32 +13,24 @@ const DEFAULTS: Settings = {
   defaults: { model: "Nano Banana 2", resolution: "2K", billing: "特价", aspectRatio: "auto" },
 };
 
-export async function readSettings(): Promise<Settings> {
-  try {
-    const raw = await fs.readFile(SETTINGS_PATH, "utf-8");
-    const parsed = JSON.parse(raw) as Partial<Settings> & Record<string, unknown>;
-    return {
-      apiKey: typeof parsed.apiKey === "string" ? parsed.apiKey : "",
-      route: DEFAULT_ROUTE,
-      defaults: { ...DEFAULTS.defaults, ...(parsed.defaults || {}) },
-    };
-  } catch {
-    return { ...DEFAULTS, defaults: { ...DEFAULTS.defaults } };
-  }
+export async function readSettings(uid: string): Promise<Settings> {
+  const stored = readTenantDefaults(uid) as Partial<SettingsDefaults>;
+  return {
+    apiKey: getTenantApiKey(uid),
+    route: DEFAULT_ROUTE,
+    defaults: { ...DEFAULTS.defaults, ...stored },
+  };
 }
 
-export async function writeSettings(patch: Partial<Settings> & { clearApiKey?: boolean }): Promise<Settings> {
-  const cur = await readSettings();
-  const { clearApiKey, ...rest } = patch;
-  const next: Settings = {
-    ...cur,
-    ...rest,
-    defaults: { ...cur.defaults, ...(rest.defaults || {}) },
-  };
-  if (clearApiKey) next.apiKey = "";
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(SETTINGS_PATH, JSON.stringify(next, null, 2), "utf-8");
-  return next;
+export async function writeSettings(
+  uid: string,
+  patch: { defaults?: Partial<SettingsDefaults> },
+): Promise<Settings> {
+  if (patch.defaults) {
+    const cur = readTenantDefaults(uid) as Partial<SettingsDefaults>;
+    writeTenantDefaults(uid, { ...cur, ...patch.defaults });
+  }
+  return readSettings(uid);
 }
 
 export function toPublic(s: Settings): PublicSettings {

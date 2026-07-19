@@ -4,6 +4,10 @@
 // accounts that have it turned on upstream. Both steps live in the same
 // glass card (AnimatePresence swaps the form in place) so the card never
 // jumps around on screen.
+//
+// token 模式（线上默认）：登录停用，改为贴 o1key API 令牌进门 —— 令牌即身份，
+// 同一令牌在任何设备/浏览器贴入都会回到同一份历史与设置。原登录表单代码
+// 完整保留，AUTH_MODE=login 时切回。
 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -13,7 +17,76 @@ import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { Button } from "./ui";
 
+function TokenEntryForm() {
+  const busy = useAuth((s) => s.busy);
+  const error = useAuth((s) => s.error);
+  const enterToken = useAuth((s) => s.enterToken);
+  const clearError = useAuth((s) => s.clearError);
+
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const keyRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    keyRef.current?.focus();
+  }, []);
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (busy || !apiKey.trim()) return;
+    enterToken(apiKey.trim());
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3.5">
+      <p className="text-xs leading-relaxed text-fg-dim">
+        填入你的 o1key API 令牌即可开始。令牌只保存在服务端加密存储，按 o1key 余额计费；
+        同一令牌在任何设备填入都会回到同一份历史。
+      </p>
+      <div className="relative">
+        <input
+          ref={keyRef}
+          type={showKey ? "text" : "password"}
+          value={apiKey}
+          onChange={(e) => {
+            setApiKey(e.target.value);
+            clearError();
+          }}
+          placeholder="sk-..."
+          autoComplete="off"
+          spellCheck={false}
+          className="h-11 w-full rounded-control border border-line bg-panel-2 px-3.5 pr-10 font-mono text-sm text-fg placeholder:text-fg-mute focus:border-accent focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => setShowKey((v) => !v)}
+          aria-label={showKey ? "隐藏令牌" : "显示令牌"}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-fg-mute hover:text-fg"
+        >
+          <Icon name={showKey ? "EyeSlash" : "Eye"} size={17} />
+        </button>
+      </div>
+
+      {error ? <p className="text-xs text-red-400/80">{error}</p> : null}
+
+      <Button type="submit" variant="primary" disabled={busy} className="w-full">
+        {busy ? <Icon name="CircleNotch" size={16} className="animate-spin" /> : null}
+        开始使用
+      </Button>
+      <a
+        href="https://api.o1key.cn/console/token"
+        target="_blank"
+        rel="noreferrer"
+        className="block w-full text-center text-xs text-fg-mute hover:text-fg"
+      >
+        还没有令牌？去 o1key 控制台创建 ↗
+      </a>
+    </form>
+  );
+}
+
 export function LoginScreen() {
+  const mode = useAuth((s) => s.mode);
   const busy = useAuth((s) => s.busy);
   const error = useAuth((s) => s.error);
   const need2fa = useAuth((s) => s.need2fa);
@@ -64,6 +137,9 @@ export function LoginScreen() {
           <Logo />
         </div>
 
+        {mode === "token" ? (
+          <TokenEntryForm />
+        ) : (
         <AnimatePresence mode="wait" initial={false}>
           {!need2fa ? (
             <motion.form
@@ -155,6 +231,7 @@ export function LoginScreen() {
             </motion.form>
           )}
         </AnimatePresence>
+        )}
       </motion.div>
     </div>
   );

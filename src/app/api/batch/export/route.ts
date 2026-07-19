@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { promises as fs } from "fs";
 import path from "path";
 import { requireAuth } from "@/lib/auth";
+import { getObject, ownsAsset } from "@/lib/storage.server";
 import { buildZip, type ZipEntry } from "@/lib/zip";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const OUTPUT_DIR = path.join(process.cwd(), "output");
-/** Same allow-list as /api/media/[name] — only image files ever land in output/. */
+/** Same allow-list as /api/media/[name] — only image files ever land in outputs. */
 const EXTS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 /** One run tops out at MAX_BATCH_TASKS (=100) results; anything past that is
  *  a malformed request, not a legitimate export. */
@@ -19,7 +18,8 @@ const MAX_FILES = 200;
 // (basename-sanitized against traversal, mirroring /api/media/[name]),
 // `name` is the desired name inside the archive ("服装名-模特N.png").
 export async function POST(req: Request) {
-  if (!(await requireAuth())) return NextResponse.json({ error: "未登录" }, { status: 401 });
+  const auth = await requireAuth();
+  if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const raw = Array.isArray(body.files) ? body.files : null;
   if (!raw || !raw.length) return NextResponse.json({ error: "缺少文件列表" }, { status: 400 });
@@ -47,12 +47,13 @@ export async function POST(req: Request) {
     }
     usedNames.add(name);
 
-    try {
-      const data = await fs.readFile(path.join(OUTPUT_DIR, file));
-      entries.push({ name, data });
-    } catch {
+    // 归属校验：只允许打包本人的资产（老代码缺这道 ACL）。
+    if (!ownsAsset(auth.uid, file)) {
       return NextResponse.json({ error: `文件不存在：${file}` }, { status: 404 });
     }
+    const data = await getObject(auth.uid, file);
+    if (!data) return NextResponse.json({ error: `文件不存在：${file}` }, { status: 404 });
+    entries.push({ name, data });
   }
 
   const zip = buildZip(entries);

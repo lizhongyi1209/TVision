@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { clearPending2fa, getPending2fa, NEWAPI_BASE_URL, setAuth, zhMessage } from "@/lib/auth";
+import { AUTH_MODE, clearPending2fa, getPending2fa, NEWAPI_BASE_URL, setAuth, zhMessage } from "@/lib/auth";
 import type { AuthUser } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  if (AUTH_MODE === "token") return NextResponse.json({ error: "登录功能已停用，请直接填入 API 令牌" }, { status: 501 });
   const pending = await getPending2fa();
   if (!pending) return NextResponse.json({ error: "验证已超时，请重新登录" }, { status: 401 });
 

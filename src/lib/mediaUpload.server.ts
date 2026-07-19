@@ -98,7 +98,33 @@ export function buildPresignedUploadHeaders(
   return headers;
 }
 
-export function validateMediaSignature(bytes: Uint8Array, contentType: string): void {
+/** 按魔数嗅探真实格式。用于纠正「扩展名 / 声明类型与内容不符」的文件
+ *  （典型：生成服务返回 JPEG 字节但下载时命名为 .png，再上传时浏览器按
+ *  扩展名声明 image/png）。识别不出返回 null。 */
+export function detectContentType(bytes: Uint8Array): string | null {
+  const has = (...values: number[]) => values.every((value, index) => bytes[index] === value);
+  const ascii = (start: number, length: number) => Buffer.from(bytes.slice(start, start + length)).toString("ascii");
+  if (has(0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (has(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "image/png";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "image/webp";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WAVE") return "audio/wav";
+  if (ascii(0, 4) === "RF64" && ascii(8, 4) === "WAVE") return "audio/wav";
+  if (ascii(0, 6) === "GIF87a" || ascii(0, 6) === "GIF89a") return "image/gif";
+  if (ascii(0, 4) === "II*\0" || ascii(0, 4) === "MM\0*") return "image/tiff";
+  if (ascii(4, 4) === "ftyp") {
+    // ISO-BMFF 家族靠 major brand 区分：HEIC/HEIF 图片、QuickTime、MP4
+    const brand = ascii(8, 4);
+    if (["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"].includes(brand)) return "image/heic";
+    if (brand === "qt  ") return "video/quicktime";
+    return "video/mp4";
+  }
+  if (["moov", "mdat", "wide", "free", "skip"].includes(ascii(4, 4))) return "video/quicktime";
+  if (ascii(0, 3) === "ID3" || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) return "audio/mpeg";
+  if (ascii(0, 2) === "BM") return "image/bmp"; // 2 字节弱签名放最后，避免误吞
+  return null;
+}
+
+export function validateMediaSignature(bytes: Uint8Array, contentType: string, filename?: string): void {
   const has = (...values: number[]) => values.every((value, index) => bytes[index] === value);
   const ascii = (start: number, length: number) => Buffer.from(bytes.slice(start, start + length)).toString("ascii");
   let valid = false;
@@ -122,7 +148,13 @@ export function validateMediaSignature(bytes: Uint8Array, contentType: string): 
       valid = ascii(0, 3) === "ID3" || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0);
       break;
   }
-  if (!valid) throw new MediaValidationError("素材文件内容与声明格式不一致");
+  if (!valid) {
+    // 带上文件名 + 声明类型 + 实际文件头，方便定位是哪个文件、真实格式是什么
+    const head = Buffer.from(bytes.slice(0, 12)).toString("hex");
+    throw new MediaValidationError(
+      `素材文件内容与声明格式不一致${filename ? `（${filename}）` : ""}：声明 ${contentType}，文件头 ${head}`,
+    );
+  }
 }
 
 function resolveMediaSpec(file: Blob & { name?: string }): MediaSpec {
@@ -160,10 +192,17 @@ export async function uploadMediaFile(options: {
   apiKey: string;
 }): Promise<{ url: string; kind: UploadMediaKind }> {
   const { file, baseUrl, apiKey } = options;
-  const spec = resolveMediaSpec(file);
-  const filename = `${randomUUID()}.${spec.extension}`;
+  let spec = resolveMediaSpec(file);
   const bytes = Buffer.from(await file.arrayBuffer());
-  validateMediaSignature(bytes, spec.contentType);
+  // 声明类型与真实内容不符时，以魔数嗅探结果为准（同一 kind 内纠正，比如
+  // .png 实为 JPEG 的生成图下载件）。跨 kind（比如 .png 实为 MP4）仍然拒绝。
+  const sniffed = detectContentType(bytes);
+  if (sniffed && sniffed !== spec.contentType) {
+    const sniffedSpec = MEDIA_TYPES[sniffed];
+    if (sniffedSpec && sniffedSpec.kind === spec.kind) spec = sniffedSpec;
+  }
+  const filename = `${randomUUID()}.${spec.extension}`;
+  validateMediaSignature(bytes, spec.contentType, file.name);
 
   const presignResponse = await fetch(`${baseUrl}/v1/storage/presign`, {
     method: "POST",

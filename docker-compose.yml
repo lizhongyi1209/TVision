@@ -1,0 +1,25 @@
+# TVision 在线部署。
+# 本机（o1key 生产服务器）nginx 已占用 80/443 并服务其他域名，所以不用 Caddy——
+# app 只绑 127.0.0.1:3002，TLS 与反代由宿主机 nginx 的 tvision.o1key.com vhost 承担
+# （/etc/nginx/conf.d/tvision.o1key.com.conf，与 api/key.o1key.com 同一套模式）。
+# 另有全球加速域名 tvision.o1key.cn（腾讯 EdgeOne 回源同一后端，
+# /etc/nginx/conf.d/tvision.o1key.cn.conf，80 不跳 HTTPS，与 whm.o1key.cn 同模式）。
+# 数据全在 tvision-data 卷（SQLite + workflow 文件 + 本地媒体回退），记得定期备份。
+#
+# 独立服务器上想用 Caddy 自动 HTTPS 的话，见 git 历史里带 caddy 服务的版本。
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATA_DIR=/data
+      - OUTPUT_DIR=/data/output
+    volumes:
+      - tvision-data:/data
+    ports:
+      - "127.0.0.1:3002:3000"
+
+volumes:
+  tvision-data:

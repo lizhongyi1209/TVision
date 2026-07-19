@@ -13,7 +13,9 @@ import type {
 import { toWorkflowRunSummary, WORKFLOW_SCHEMA_VERSION } from "./workflowTypes.ts";
 import { workflowOwnerScope } from "./workflowAssets.server.ts";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(process.cwd(), "data");
 const WORKFLOWS_DIR = path.join(DATA_DIR, "workflows");
 const RUNS_DIR = path.join(DATA_DIR, "workflow-runs");
 const FILE_MUTEX_STALE_MS = 5 * 60_000;

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { NEWAPI_BASE_URL, requireAuth, zhMessage } from "@/lib/auth";
+import { AUTH_MODE, NEWAPI_BASE_URL, requireAuth, zhMessage } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // 代理 user/topup（兑换码）：这个接口走标准的 success/message 形状。
 export async function POST(req: Request) {
+  if (AUTH_MODE === "token") return NextResponse.json({ error: "在线充值暂不可用，请前往 o1key 官网充值" }, { status: 501 });
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
 

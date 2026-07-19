@@ -7,6 +7,15 @@
 
 import { cookies } from "next/headers";
 import type { AuthUser } from "./types";
+import { getTenant } from "./tenant.server.ts";
+
+// 在线部署的鉴权模式开关：
+//   "token"（默认，线上唯一模式）—— 登录停用，用户贴 o1key 令牌进门，
+//     令牌哈希即租户 uid（tenant.server.ts），所有数据按 uid 隔离。
+//   "login" —— 原有的上游账号登录流程（代码保留，本地/将来可切回）。
+// getAuth/requireAuth 在 token 模式下委托给租户层并返回同形状的
+// AuthSession（session 为空串），30 个路由的 auth.uid 接线原样复用。
+export const AUTH_MODE: "token" | "login" = process.env.AUTH_MODE === "login" ? "login" : "token";
 
 // 直接写死上游地址，不读环境变量：不同电脑/终端里各自残留的 NEWAPI_BASE_URL
 // 曾经指向过一个已经失效的旧域名（vip.o1key.com），一旦哪台机器的用户级环境
@@ -27,10 +36,20 @@ export interface AuthSession {
   username: string;
 }
 
-const COOKIE_OPTS = { httpOnly: true, sameSite: "lax" as const, path: "/" };
+const COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  path: "/",
+  secure: process.env.NODE_ENV === "production",
+};
 
-/** 读本站会话 cookie，缺失或损坏一律视为未登录。 */
+/** 读本站会话 cookie，缺失或损坏一律视为未登录。
+ *  token 模式：委托租户层，session 恒为空串（没有上游账号会话可转发）。 */
 export async function getAuth(): Promise<AuthSession | null> {
+  if (AUTH_MODE === "token") {
+    const t = await getTenant();
+    return t ? { session: "", uid: t.uid, username: t.label } : null;
+  }
   const store = await cookies();
   const raw = store.get(AUTH_COOKIE)?.value;
   if (!raw) return null;

@@ -22,46 +22,53 @@ function params(patch: Partial<VideoJobParams> = {}): VideoJobParams {
 }
 
 test("Seedance UI values map to the working upstream model IDs", () => {
-  assert.equal(VIDEO_MODEL_IDS["seedance-2.0"], "doubao-seedance-2-0-260128");
-  assert.equal(VIDEO_MODEL_IDS["seedance-2.0-fast"], "doubao-seedance-2-0-fast-260128");
+  assert.equal(VIDEO_MODEL_IDS["seedance-2.0"], "seedance-2.0");
+  assert.equal(VIDEO_MODEL_IDS["seedance-2.0-fast"], "seedance-2.0-fast");
 });
 
-test("Seedance Fast only exposes 480p and 720p", () => {
-  assert.deepEqual(allowedVideoResolutions("seedance-2.0-fast"), ["480p", "720p"]);
-  assert.deepEqual(allowedVideoResolutions("seedance-2.0"), ["480p", "720p", "1080p", "4K"]);
+test("Seedance Fast only exposes 720p", () => {
+  assert.deepEqual(allowedVideoResolutions("seedance-2.0-fast"), ["720p"]);
+  assert.deepEqual(allowedVideoResolutions("seedance-2.0"), ["720p", "1080p", "4K"]);
 });
 
-test("Seedance body uses explicit media roles and unified gateway fields", () => {
+test("Seedance body follows the Ark gateway format (images/videos/audios arrays)", () => {
   const body = buildSeedanceGenerationBody(params({
     mode: "4K",
-    duration: -1,
-    negativePrompt: "模糊，抖动",
+    duration: 12,
     sound: true,
-    aspectRatio: "21:9",
-    watermark: true,
+    aspectRatio: "9:16",
     webSearch: true,
+    cameraFixed: true,
+    seed: 42,
     refUrls: ["https://cdn.example.com/ref.png"],
     videoUrls: ["https://cdn.example.com/ref.mp4"],
     audioUrls: ["https://cdn.example.com/ref.wav"],
   }));
 
   assert.deepEqual(body, {
-    model: "doubao-seedance-2-0-260128",
+    model: "seedance-2.0",
     prompt: "雨夜街头的电影感镜头",
-    negative_prompt: "模糊，抖动",
     resolution: "4k",
-    ratio: "21:9",
-    duration: -1,
+    ratio: "9:16",
+    duration: 12,
+    camera_fixed: true,
     generate_audio: true,
-    watermark: true,
     web_search: true,
+    seed: 42,
     images: [{ url: "https://cdn.example.com/ref.png", role: "reference_image" }],
     videos: ["https://cdn.example.com/ref.mp4"],
     audios: ["https://cdn.example.com/ref.wav"],
   });
 });
 
-test("Seedance first and last frame roles are explicit", () => {
+test("Seedance omits seed when unset and rejects non-integer seed", () => {
+  const body = buildSeedanceGenerationBody(params());
+  assert.equal(body.seed, undefined);
+  assert.equal(body.camera_fixed, false);
+  assert.throws(() => buildSeedanceGenerationBody(params({ seed: 1.5 })), /整数/);
+});
+
+test("Seedance first and last frames become role-tagged images[] entries", () => {
   const body = buildSeedanceGenerationBody(params({
     imageUrl: "https://cdn.example.com/first.png",
     tailUrl: "https://cdn.example.com/last.png",
@@ -70,6 +77,14 @@ test("Seedance first and last frame roles are explicit", () => {
     { url: "https://cdn.example.com/first.png", role: "first_frame" },
     { url: "https://cdn.example.com/last.png", role: "last_frame" },
   ]);
+  assert.equal(body.videos, undefined);
+  assert.equal(body.audios, undefined);
+});
+
+test("Seedance omits ratio when aspect is 智能", () => {
+  const body = buildSeedanceGenerationBody(params());
+  assert.equal(body.ratio, undefined);
+  assert.equal(body.resolution, "720p");
 });
 
 test("Seedance gateway accepts an explicitly declared last frame by itself", () => {
@@ -90,6 +105,7 @@ test("Seedance Fast rejects 1080p", () => {
 
 test("Seedance rejects invalid duration and standalone audio", () => {
   assert.throws(() => buildSeedanceGenerationBody(params({ duration: 3 })), /4-15/);
+  assert.throws(() => buildSeedanceGenerationBody(params({ duration: 16 })), /4-15/);
   assert.throws(
     () => buildSeedanceGenerationBody(params({ audioUrls: ["https://cdn.example.com/ref.mp3"] })),
     /音频不能单独提交/,

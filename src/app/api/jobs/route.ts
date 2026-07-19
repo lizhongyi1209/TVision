@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
+import { LIMITS, MAX_ACTIVE_JOBS, rateLimit } from "@/lib/rateLimit.server";
 import {
   buildGptImageSubmitBody,
   buildModelId,
@@ -11,6 +12,8 @@ import {
   submitTask,
 } from "@/lib/o1key";
 import { appendMeta } from "@/lib/historyMeta";
+import { activeJobCount, registerJobs } from "@/lib/jobRegistry.server";
+import { quotaExceeded } from "@/lib/storage.server";
 import { MAX_REF_IMAGES } from "@/lib/limits";
 import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
 
@@ -22,7 +25,16 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
-  const s = await readSettings();
+  if (!rateLimit("generate", auth.uid, LIMITS.GENERATE_PER_UID)) {
+    return NextResponse.json({ error: "请求过于频繁，请稍后再试" }, { status: 429 });
+  }
+  if (activeJobCount(auth.uid) >= MAX_ACTIVE_JOBS) {
+    return NextResponse.json({ error: `同时进行的任务过多（上限 ${MAX_ACTIVE_JOBS}），请等待部分任务完成` }, { status: 429 });
+  }
+  if (quotaExceeded(auth.uid)) {
+    return NextResponse.json({ error: "存储空间已满，请在历史面板删除部分旧图后再生成" }, { status: 507 });
+  }
+  const s = await readSettings(auth.uid);
   if (!s.apiKey) {
     return NextResponse.json({ error: "未设置 API 令牌，请先在设置中填入 o1key 令牌" }, { status: 400 });
   }
@@ -92,7 +104,8 @@ export async function POST(req: Request) {
     const ids = await Promise.all(
       Array.from({ length: count }, () => submitTask(baseUrl, s.apiKey, submitBody)),
     );
-    await appendMeta(ids, {
+    registerJobs(auth.uid, ids, "image");
+    await appendMeta(auth.uid, ids, {
       prompt,
       model: model as ModelName,
       resolution: resolution as Resolution,
@@ -105,6 +118,6 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ jobs: ids.map((id, index) => ({ id, index })), modelId });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error)?.message || "提交失败" }, { status: 502 });
+    return NextResponse.json({ error: (e as Error)?.message || "提交失败" }, { status: 500 });
   }
 }

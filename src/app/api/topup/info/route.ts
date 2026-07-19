@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { NEWAPI_BASE_URL, requireAuth } from "@/lib/auth";
+import { AUTH_MODE, NEWAPI_BASE_URL, requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +12,7 @@ interface PayMethod {
 
 // 代理 user/topup/info：只挑前端用得到的字段透传，别的（图标 URL 之类）不需要。
 export async function GET() {
+  if (AUTH_MODE === "token") return NextResponse.json({ error: "在线充值暂不可用，请前往 o1key 官网充值" }, { status: 501 });
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
 

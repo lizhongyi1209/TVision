@@ -103,8 +103,22 @@ TVision/
 
 ## 数据与隐私
 
-- 令牌只写在本机 `data/settings.json`；生成图片只存在本机 `output/`；生成参数（提示词/模型/分辨率等）写入本机 `data/history-meta.json`，用于历史图片还原。
-- 除了你配置的 o1key 线路，应用不向任何第三方发送数据。
+- **多租户模式（在线部署，默认）**：贴入 o1key 令牌即进门，**令牌即身份**——所有历史/设置/模板/工作流按令牌哈希隔离，换设备重贴同一令牌即恢复。令牌以 AES-256-GCM 加密存服务端 SQLite（`<DATA_DIR>/tvision.db`）；生成媒体存 S3 兼容对象存储（未配置时回退本地 `<OUTPUT_DIR>/<uid>/`），按租户 2GB 配额。
+- 除了你配置的 o1key 线路和你自己的对象存储，应用不向任何第三方发送数据。
+
+## 在线部署（Docker）
+
+```bash
+cp .env.example .env
+# 填 APP_SECRET（openssl rand -hex 32）、DOMAIN、S3_*（推荐 Cloudflare R2 / 阿里 OSS）
+docker compose up -d --build
+```
+
+- Caddy 自动签 HTTPS；`DOMAIN` 需要先解析到服务器 IP。
+- 所有持久数据在 `tvision-data` 卷（SQLite + workflow 文件），**每日备份这个卷**；媒体在对象存储里自带持久性。
+- 关键环境变量见 `.env.example`：`AUTH_MODE=token`（贴令牌进门，登录代码保留可切回 `login`）、`TENANT_QUOTA_BYTES`、`MAX_ACTIVE_JOBS`。
+- 限流内置：进门/验令牌 10 次/分/IP，生成 30 次/分/租户，上传 20 次/分/租户，同时任务上限 8。
+- ⚠️ 换 `APP_SECRET` 会导致所有已存令牌无法解密——用户重贴令牌即可恢复，但不要随意轮换。
 
 ## 常见问题
 

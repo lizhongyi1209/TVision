@@ -1,0 +1,20 @@
+# 千万别把宿主机的 node_modules 拷进镜像 —— better-sqlite3 是原生模块，
+# 宿主机 (glibc) 编译产物在 Alpine (musl) 里加载会炸
+# (Error loading shared library ld-linux-x86-64.so.2)。
+# deps 阶段会在容器内重新 npm ci。
+node_modules
+.next
+.git
+data
+output
+tmp
+*.log
+.env
+.env.*
+!.env.example
+Dockerfile
+docker-compose.yml
+Caddyfile
+claude-sync
+plan
+scripts/probe.*
