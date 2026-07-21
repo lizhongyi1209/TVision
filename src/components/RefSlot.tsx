@@ -3,9 +3,7 @@
 import { motion } from "motion/react";
 import { useRef, useState } from "react";
 import { getAction, type StudioAction } from "@/lib/actions";
-import { MAX_REF_IMAGES } from "@/lib/limits";
-import { extractImageText, PNG_META_KEYWORD } from "@/lib/pngMeta";
-import { parseEmbeddedMeta } from "@/lib/templates";
+import { addRefsFromFiles } from "@/lib/canvasFiles";
 import { useStudio } from "@/lib/store";
 import { cn, fileToDownscaledDataURL } from "@/lib/utils";
 import { Icon } from "./icons";
@@ -57,31 +55,21 @@ export function RefSlot({ compact = false }: { compact?: boolean }) {
 // just reading/writing refImages[0] instead of a standalone refImage string.
 function PresetRefBox({ action, compact }: { action: StudioAction; compact: boolean }) {
   const refImages = useStudio((s) => s.refImages);
-  const addRefs = useStudio((s) => s.addRefs);
   const removeRef = useStudio((s) => s.removeRef);
-  const replaceRef = useStudio((s) => s.replaceRef);
   const cancelAction = useStudio((s) => s.cancelAction);
-  const showToast = useStudio((s) => s.showToast);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
   const refImage = refImages[0];
 
+  // Replace-or-add + toast + tab-switch guard all live in the shared helper
+  // (lib/canvasFiles.ts, preset branch), also used by the dock's 参考图 entry.
   async function handle(file: File | undefined | null) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      showToast("error", "请选择图片文件");
-      return;
-    }
     setBusy(true);
     try {
-      const { dataUrl } = await fileToDownscaledDataURL(file, 1400, 0.92);
-      if (refImages.length) replaceRef(0, dataUrl);
-      else addRefs([dataUrl]);
-      showToast("success", "参考图已就绪");
-    } catch {
-      showToast("error", "读取失败");
+      await addRefsFromFiles([file]);
     } finally {
       setBusy(false);
     }
@@ -219,7 +207,6 @@ function PresetRefBox({ action, compact }: { action: StudioAction; compact: bool
 // pick a preset" default, not a deliberate upload step).
 function FreeRefList({ compact }: { compact: boolean }) {
   const refImages = useStudio((s) => s.refImages);
-  const addRefs = useStudio((s) => s.addRefs);
   const removeRef = useStudio((s) => s.removeRef);
   const replaceRef = useStudio((s) => s.replaceRef);
   const moveRef = useStudio((s) => s.moveRef);
@@ -231,41 +218,13 @@ function FreeRefList({ compact }: { compact: boolean }) {
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
 
+  // Cap check + append + TVision-PNG recipe restore + tab-switch guard all
+  // live in the shared helper (free branch) — same one the dock uses.
   async function handleAdd(files: File[]) {
-    const images = files.filter((f) => f.type.startsWith("image/"));
-    if (!images.length) {
-      if (files.length) showToast("error", "请选择图片文件");
-      return;
-    }
-    const room = MAX_REF_IMAGES - refImages.length;
-    const accepted = images.slice(0, Math.max(0, room));
-    if (images.length > accepted.length) showToast("error", `最多添加 ${MAX_REF_IMAGES} 张参考图`);
-    if (!accepted.length) return;
+    if (!files.length) return;
     setBusy(true);
     try {
-      const dataUrls = await Promise.all(
-        accepted.map((f) => fileToDownscaledDataURL(f, 1400, 0.92).then((r) => r.dataUrl)),
-      );
-      addRefs(dataUrls);
-      // PLAN-TEMPLATE: a TVision-generated PNG dropped as a reference also
-      // restores the settings that produced it (first ref carrying metadata
-      // wins). Read from the ORIGINAL file bytes — the downscale above
-      // re-encodes and strips the chunk.
-      try {
-        for (const f of accepted) {
-          const meta = extractImageText(new Uint8Array(await f.arrayBuffer()), PNG_META_KEYWORD);
-          const params = meta ? parseEmbeddedMeta(meta) : null;
-          if (params) {
-            useStudio.getState().updateParams(params);
-            showToast("success", "检测到 TVision 生成信息，已还原当时的提示词与参数");
-            break;
-          }
-        }
-      } catch {
-        // best-effort restore; refs themselves already landed
-      }
-    } catch {
-      showToast("error", "读取失败");
+      await addRefsFromFiles(files);
     } finally {
       setBusy(false);
     }

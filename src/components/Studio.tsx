@@ -16,7 +16,6 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { GenerateBar } from "./GenerateBar";
 import { Grain } from "./Grain";
 import { HistoryPage } from "./HistoryPage";
-import { Icon } from "./icons";
 import { Logo } from "./Logo";
 import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";

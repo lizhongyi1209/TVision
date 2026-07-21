@@ -8,17 +8,19 @@
 // （见下方 /api/video/save 调用），统一在独立导航页「历史生成」
 // （HistoryPage.tsx）里查看/播放/删除，图片和视频共用一套列表。
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useStudio } from "@/lib/store";
 import { diag } from "@/lib/logStore";
 import { useVideoStore, type FrameMode } from "@/lib/videoStore";
-import { isSeedanceModel, maxReferenceImages, supportsReferenceMedia } from "@/lib/videoGateway";
+import { isSeedanceModel, maxReferenceImages, maxReferenceVideos, supportsReferenceMedia } from "@/lib/videoGateway";
+import type { VideoReferType } from "@/lib/videoTypes";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Segmented } from "./ui";
 import { VideoBar } from "./VideoBar";
 import { VideoTrimPanel } from "./VideoTrimPanel";
+import { FramePickPanel, type FrameTarget } from "./FramePickPanel";
 
 const SUPPORTED_IMAGE_FILE = /\.(jpe?g|png|webp|bmp|tiff?|gif|heic|heif)$/i;
 
@@ -28,6 +30,25 @@ function isSupportedImageFile(file: File): boolean {
     "image/gif", "image/heic", "image/heif",
   ].includes(file.type.toLowerCase());
 }
+
+// 参考视频规格：按模型分流。
+//   Seedance（火山方舟）：≥2s、300-6000px、宽高比 0.4-2.5、单段 ≤200MB，最多 3 段，总长 ≤15s。
+//   可灵 v3-omni（官方 omni-video）：3~15.5s、720-2160px、宽高比 0.4-2.5（1:2.5~2.5:1）、≤200MB，至多 1 段。
+type RefVideoSpec = {
+  minDuration: number;
+  maxDuration: number;
+  minSide: number;
+  maxSide: number;
+  minRatio: number;
+  maxRatio: number;
+  maxBytes: number;
+};
+const KLING_REF_VIDEO_SPEC: RefVideoSpec = {
+  minDuration: 3, maxDuration: 15.5, minSide: 720, maxSide: 2160, minRatio: 0.4, maxRatio: 2.5, maxBytes: 200 * 1024 * 1024,
+};
+const SEEDANCE_REF_VIDEO_SPEC: RefVideoSpec = {
+  minDuration: 2, maxDuration: 15.05, minSide: 300, maxSide: 6000, minRatio: 0.4, maxRatio: 2.5, maxBytes: 200 * 1024 * 1024,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 参考图添加按钮（小型，用于 v3-omni 参考图列表末尾）
@@ -152,16 +173,25 @@ function FrameSlot({
 function ReferenceMediaSection({
   kind,
   items,
+  max = 3,
   onAdd,
   onRemove,
   onTrim,
+  onGrabFrame,
+  children,
 }: {
   kind: "video" | "audio";
   items: { previewUrl: string; file: File; duration: number | null }[];
+  /** 数量上限（Seedance 视频/音频均为 3；可灵 v3-omni 视频为 1）。 */
+  max?: number;
   onAdd: (file: File) => void;
   onRemove: (index: number) => void;
   /** 仅视频：打开快速裁剪面板。 */
   onTrim?: (index: number) => void;
+  /** 仅视频：打开取帧面板，提取首/尾帧作参考图。 */
+  onGrabFrame?: (index: number) => void;
+  /** 额外控件（如 v3-omni 的视频用途选择器），渲染在列表上方。 */
+  children?: ReactNode;
 }) {
   const isVideo = kind === "video";
   const label = isVideo ? "参考视频" : "参考音频";
@@ -169,8 +199,9 @@ function ReferenceMediaSection({
     <section className="mt-4">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-medium text-fg-mute">{label}</span>
-        <span className="text-[10px] text-fg-mute/60">最多 3 个</span>
+        <span className="text-[10px] text-fg-mute/60">最多 {max} 个</span>
       </div>
+      {children}
       <div className="flex flex-col gap-2">
         {items.map((item, index) => (
           <div key={`${item.file.name}-${index}`} className="group relative overflow-hidden rounded-control border border-line bg-panel-2">
@@ -196,6 +227,17 @@ function ReferenceMediaSection({
               {isVideo && (item.duration ?? 0) > 15.05 ? " · 需裁剪" : ""}
             </span>
             <div className="absolute right-1.5 top-1.5 flex items-center gap-1.5">
+              {isVideo && onGrabFrame && (
+                <button
+                  type="button"
+                  onClick={() => onGrabFrame(index)}
+                  className="flex h-6 items-center gap-1 rounded-full bg-black/70 px-2 text-[10px] text-fg transition-colors hover:bg-accent/80 hover:text-white"
+                  title="提取首/尾帧作参考图"
+                >
+                  <Icon name="FilmStrip" size={11} />
+                  取帧
+                </button>
+              )}
               {isVideo && onTrim && (
                 <button
                   type="button"
@@ -218,7 +260,7 @@ function ReferenceMediaSection({
             </div>
           </div>
         ))}
-        {items.length < 3 && (
+        {items.length < max && (
           <AssetAddButton
             onFile={onAdd}
             accept={isVideo ? "video/mp4,video/quicktime,.mp4,.mov" : "audio/wav,audio/mpeg,.wav,.mp3"}
@@ -488,6 +530,10 @@ export function VideoWorkshop() {
   const refImages     = useVideoStore((s) => s.refImages);
   const refVideos     = useVideoStore((s) => s.refVideos);
   const refAudios     = useVideoStore((s) => s.refAudios);
+  const referType     = useVideoStore((s) => s.referType);
+  const setReferType  = useVideoStore((s) => s.setReferType);
+  const keepOriginalSound = useVideoStore((s) => s.keepOriginalSound);
+  const setKeepOriginalSound = useVideoStore((s) => s.setKeepOriginalSound);
   const frameMode     = useVideoStore((s) => s.frameMode);
   const setFrameMode  = useVideoStore((s) => s.setFrameMode);
   const setStartFrame = useVideoStore((s) => s.setStartFrame);
@@ -512,6 +558,15 @@ export function VideoWorkshop() {
     previewUrl: string;
     duration: number;
     replaceIndex: number | null;
+  } | null>(null);
+
+  // 取帧面板（PLAN-VIDEO-FRAME）。src 为要取帧的视频源；targets 决定落点按钮；
+  // origin 用于日志/文案区分「来自参考视频」还是「来自生成结果」。
+  const [framePick, setFramePick] = useState<{
+    src: string;
+    title: string;
+    targets: FrameTarget[];
+    initial: "start" | "end";
   } | null>(null);
 
   // 图片 / 视频 / 音频统一走预签名上传，返回生成接口可访问的公网 URL。
@@ -541,10 +596,29 @@ export function VideoWorkshop() {
       const total = shots.reduce((sum, s) => sum + s.duration, 0);
       if (total !== duration) { showToast("error", `各分镜时长之和 (${total}s) 必须等于总时长 (${duration}s)`); return; }
     }
-    // 官方约束：无首帧（多图参考 / 纯文本）时宽高比必须明确指定，不能「智能」
-    if (isOmni && !useFrames && aspectRatio === "智能") {
-      showToast("error", "多图参考模式下请选择明确宽高比（16:9 / 9:16 / 1:1）");
+    // v3-omni 多图参考模式允许「智能」：此时不向上游传 aspect_ratio（见
+    // api/video/jobs/route.ts 的 `if (aspectRatio !== "智能")`），由上游按默认画幅处理。
+    // 官方约束：v3-omni 视频编辑（base）模式不支持分镜。
+    if (isOmni && !useFrames && refVideos.length && referType === "base" && shotsEnabled) {
+      showToast("error", "视频编辑（base）模式不支持分镜，请关闭分镜或改用「视频参考」");
       return;
+    }
+    // 可灵官方规格：v3-omni 参考视频至多 1 段、单段时长 ≥3 秒。
+    if (isOmni && !useFrames && refVideos.length) {
+      if (refVideos.length > maxReferenceVideos(model)) {
+        showToast("error", `可灵 v3-omni 至多支持 ${maxReferenceVideos(model)} 段参考视频`);
+        return;
+      }
+      const short = refVideos.findIndex((v) => (v.duration ?? KLING_REF_VIDEO_SPEC.minDuration) < KLING_REF_VIDEO_SPEC.minDuration);
+      if (short >= 0) {
+        showToast("error", `参考视频 ${short + 1} 时长不足 ${KLING_REF_VIDEO_SPEC.minDuration} 秒`);
+        return;
+      }
+      const long = refVideos.findIndex((v) => (v.duration ?? 0) > KLING_REF_VIDEO_SPEC.maxDuration);
+      if (long >= 0) {
+        showToast("error", `参考视频 ${long + 1} 超过 ${KLING_REF_VIDEO_SPEC.maxDuration} 秒，请点击卡片上的裁剪按钮裁剪`);
+        return;
+      }
     }
     if (isSeedance && !useFrames && refAudios.length > 0 && refImages.length === 0 && refVideos.length === 0) {
       showToast("error", "参考音频不能单独使用，请同时添加参考图片或参考视频");
@@ -586,8 +660,11 @@ export function VideoWorkshop() {
         if (tailFrame)  tailUrl  = await uploadAsset(tailFrame.file);
       } else {
         for (const ref of refImages) refUrls.push(await uploadAsset(ref.file));
-        if (isSeedance) {
+        // 参考视频：Seedance 与 v3-omni 都支持；参考音频仅 Seedance。
+        if (isSeedance || isOmni) {
           for (const ref of refVideos) videoUrls.push(await uploadAsset(ref.file));
+        }
+        if (isSeedance) {
           for (const ref of refAudios) audioUrls.push(await uploadAsset(ref.file));
         }
       }
@@ -607,6 +684,8 @@ export function VideoWorkshop() {
           tailUrl:  tailUrl  || undefined,
           refUrls:  refUrls.length ? refUrls : undefined,
           videoUrls: videoUrls.length ? videoUrls : undefined,
+          referType: isOmni && videoUrls.length ? referType : undefined,
+          keepOriginalSound: isOmni && videoUrls.length ? keepOriginalSound : undefined,
           audioUrls: audioUrls.length ? audioUrls : undefined,
           shots:    !isSeedance && shotsEnabled ? shots : [],
         }),
@@ -663,24 +742,25 @@ export function VideoWorkshop() {
   }
 
   async function handleReferenceVideo(file: File) {
+    const spec = isOmni ? KLING_REF_VIDEO_SPEC : SEEDANCE_REF_VIDEO_SPEC;
     if (!/\.(mp4|mov)$/i.test(file.name) && !["video/mp4", "video/quicktime"].includes(file.type)) {
       showToast("error", "参考视频仅支持 MP4 或 MOV");
       return;
     }
-    if (file.size > 200 * 1024 * 1024) {
-      showToast("error", "参考视频不能超过 200MB");
+    if (file.size > spec.maxBytes) {
+      showToast("error", `参考视频不能超过 ${Math.round(spec.maxBytes / 1024 / 1024)}MB`);
       return;
     }
     const previewUrl = URL.createObjectURL(file);
     let meta: { duration: number; width: number; height: number } | null = null;
     try {
       meta = await readMediaMetadata(previewUrl, "video");
-      if (!Number.isFinite(meta.duration) || meta.duration < 2) {
-        throw new Error("单个参考视频时长不能少于 2 秒");
+      if (!Number.isFinite(meta.duration) || meta.duration < spec.minDuration) {
+        throw new Error(`单个参考视频时长不能少于 ${spec.minDuration} 秒`);
       }
       const ratio = meta.height ? meta.width / meta.height : 0;
-      if (meta.width < 300 || meta.height < 300 || meta.width > 6000 || meta.height > 6000 || ratio < 0.4 || ratio > 2.5) {
-        throw new Error("参考视频尺寸需为 300-6000px，宽高比需在 0.4-2.5 之间");
+      if (meta.width < spec.minSide || meta.height < spec.minSide || meta.width > spec.maxSide || meta.height > spec.maxSide || ratio < spec.minRatio || ratio > spec.maxRatio) {
+        throw new Error(`参考视频尺寸需为 ${spec.minSide}-${spec.maxSide}px，宽高比需在 ${spec.minRatio}-${spec.maxRatio} 之间`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "读取参考视频失败";
@@ -764,10 +844,14 @@ export function VideoWorkshop() {
     const replaceIndex = trimTarget.replaceIndex;
     const previewUrl = URL.createObjectURL(trimmed);
     try {
+      const spec = isOmni ? KLING_REF_VIDEO_SPEC : SEEDANCE_REF_VIDEO_SPEC;
       const meta = await readMediaMetadata(previewUrl, "video");
       const ratio = meta.height ? meta.width / meta.height : 0;
-      if (meta.width < 300 || meta.height < 300 || meta.width > 6000 || meta.height > 6000 || ratio < 0.4 || ratio > 2.5) {
-        throw new Error("参考视频尺寸需为 300-6000px，宽高比需在 0.4-2.5 之间");
+      if (meta.width < spec.minSide || meta.height < spec.minSide || meta.width > spec.maxSide || meta.height > spec.maxSide || ratio < spec.minRatio || ratio > spec.maxRatio) {
+        throw new Error(`参考视频尺寸需为 ${spec.minSide}-${spec.maxSide}px，宽高比需在 ${spec.minRatio}-${spec.maxRatio} 之间`);
+      }
+      if (!Number.isFinite(meta.duration) || meta.duration < spec.minDuration) {
+        throw new Error(`单个参考视频时长不能少于 ${spec.minDuration} 秒`);
       }
       const asset = { file: trimmed, previewUrl, duration: meta.duration };
       const addError = replaceIndex == null ? addRefVideo(asset) : replaceRefVideo(replaceIndex, asset);
@@ -785,6 +869,47 @@ export function VideoWorkshop() {
     const item = refAudios[index];
     if (item) URL.revokeObjectURL(item.previewUrl);
     removeRefAudio(index);
+  }
+
+  // 参考视频卡片的「取帧」：打开取帧面板，默认停在首帧（参考视频常取首帧定主体）。
+  // 参考模式下唯一有意义的落点是「加入参考图」。
+  function handleGrabFrameFromRefVideo(index: number) {
+    const item = refVideos[index];
+    if (!item) return;
+    setFramePick({ src: item.previewUrl, title: "从参考视频提取帧", targets: ["ref"], initial: "start" });
+  }
+
+  // 生成结果播放器的「提取帧」：默认停在尾帧（承接下一段最常用），
+  // 落点随模型能力给全 —— 起始帧 / 尾帧，支持多模态参考的再加「加入参考图」。
+  function openFramePickFromResult() {
+    const resultSrc = blobUrl ?? videoUrl;
+    if (!resultSrc) return;
+    const targets: FrameTarget[] = ["start", "tail"];
+    if (canUseReferences) targets.push("ref");
+    setFramePick({ src: resultSrc, title: "从生成结果提取帧", targets, initial: "end" });
+  }
+
+  // 取帧落点：起始帧 / 尾帧走首尾帧模式，参考图走参考模式（并按模型能力切 frameMode）。
+  // 帧文件复用上传图片的 prepareImageAsset 做尺寸/宽高比校验，失败给 toast。
+  async function handleFramePickApply(file: File, target: FrameTarget) {
+    const asset = await prepareImageAsset(file);
+    if (!asset) return; // prepareImageAsset 已 toast
+    if (target === "ref") {
+      if (canUseReferences && frameMode !== "refs") setFrameMode("refs");
+      const addError = addRefImage(asset);
+      if (addError) {
+        URL.revokeObjectURL(asset.previewUrl);
+        showToast("error", addError);
+        return;
+      }
+      showToast("success", "已加入参考图");
+    } else {
+      if (canUseReferences && frameMode !== "frames") setFrameMode("frames");
+      if (target === "start") setStartFrame(asset);
+      else setTailFrame(asset);
+      showToast("success", target === "start" ? "已设为起始帧" : "已设为尾帧");
+    }
+    setFramePick(null);
   }
 
   const busy = phase === "uploading" || phase === "submitting" || phase === "running";
@@ -886,6 +1011,7 @@ export function VideoWorkshop() {
                     onAdd={handleReferenceVideo}
                     onRemove={handleRemoveReferenceVideo}
                     onTrim={handleTrimReferenceVideo}
+                    onGrabFrame={handleGrabFrameFromRefVideo}
                   />
                   <ReferenceMediaSection
                     kind="audio"
@@ -896,6 +1022,44 @@ export function VideoWorkshop() {
                   <p className="mt-3 text-[10px] leading-relaxed text-fg-mute/70">
                     音频不能单独使用，需要同时添加参考图或参考视频
                   </p>
+                </>
+              )}
+              {isOmni && (
+                <>
+                  <ReferenceMediaSection
+                    kind="video"
+                    items={refVideos}
+                    max={maxReferenceVideos(model)}
+                    onAdd={handleReferenceVideo}
+                    onRemove={handleRemoveReferenceVideo}
+                    onTrim={handleTrimReferenceVideo}
+                    onGrabFrame={handleGrabFrameFromRefVideo}
+                  >
+                    <div className="mb-2">
+                      <Segmented
+                        value={referType}
+                        onChange={(v) => setReferType(v as VideoReferType)}
+                        options={[
+                          { value: "feature", label: "视频参考" },
+                          { value: "base", label: "视频编辑" },
+                        ]}
+                      />
+                      <p className="mt-1.5 text-[10px] leading-relaxed text-fg-mute/70">
+                        {referType === "feature"
+                          ? "参考视频的内容 / 风格 / 运镜生成新镜头"
+                          : "在原视频上增删改内容（此时不支持分镜，且不生成音频）"}
+                      </p>
+                      <label className="mt-2 flex items-center gap-2 text-[11px] text-fg-dim">
+                        <input
+                          type="checkbox"
+                          checked={keepOriginalSound}
+                          onChange={(e) => setKeepOriginalSound(e.target.checked)}
+                          className="h-3.5 w-3.5 accent-accent"
+                        />
+                        保留参考视频原声
+                      </label>
+                    </div>
+                  </ReferenceMediaSection>
                 </>
               )}
             </div>
@@ -910,6 +1074,23 @@ export function VideoWorkshop() {
             progress={progress}
             phase={phase}
           />
+
+          {phase === "success" && (blobUrl || videoUrl) && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openFramePickFromResult}
+                className="flex h-9 items-center gap-1.5 rounded-control border border-line bg-panel-2 px-3 text-xs text-fg transition-colors hover:border-accent hover:text-accent"
+                title="提取该视频的某一帧作为起始帧 / 尾帧 / 参考图"
+              >
+                <Icon name="FilmStrip" size={14} />
+                提取帧
+              </button>
+              <span className="text-[10px] text-fg-mute/70">
+                取尾帧作下一段起始帧，可无缝续拍
+              </span>
+            </div>
+          )}
 
           <AnimatePresence>
             {error && phase === "error" && (
@@ -943,6 +1124,22 @@ export function VideoWorkshop() {
             duration={trimTarget.duration}
             onDone={handleTrimDone}
             onCancel={closeTrimPanel}
+            onError={(message) => showToast("error", message)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* 视频取帧（首/尾帧 → 起始帧 / 尾帧 / 参考图） */}
+      <AnimatePresence>
+        {framePick && (
+          <FramePickPanel
+            key={framePick.src}
+            src={framePick.src}
+            title={framePick.title}
+            targets={framePick.targets}
+            initial={framePick.initial}
+            onApply={handleFramePickApply}
+            onCancel={() => setFramePick(null)}
             onError={(message) => showToast("error", message)}
           />
         )}

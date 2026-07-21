@@ -18,12 +18,11 @@ import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Button, Select } from "./ui";
 
+// 可灵 v3 / v2.6 暂时隐藏（不在选择器里展示），保留在 videoTypes/videoGateway 中以兼容历史记录。
 const MODELS: { value: VideoModel; label: string; hint: string }[] = [
-  { value: "v3",      label: "可灵 v3",      hint: "图生视频 · 3~15s · 支持 4K" },
-  { value: "v2-6",    label: "可灵 v2.6",    hint: "图生视频 · 5/10s · 性价比" },
-  { value: "v3-omni", label: "可灵 v3-omni", hint: "多模态 · 参考图/视频" },
   { value: "seedance-2.0", label: "Seedance 2.0", hint: "多模态 · 有声 · 最高 4K" },
   { value: "seedance-2.0-fast", label: "Seedance 2.0 Fast", hint: "多模态 · 快速 · 最高 720p" },
+  { value: "v3-omni", label: "可灵 v3-omni", hint: "多模态 · 参考图/视频" },
 ];
 
 // 上游接入指南：Seedance ratio 可选 16:9 / 9:16 / 4:3 / 3:4 / 1:1；

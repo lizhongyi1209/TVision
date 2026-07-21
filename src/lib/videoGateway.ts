@@ -59,6 +59,13 @@ export function maxReferenceImages(model: VideoModel): number {
   return isSeedanceModel(model) ? 9 : 7;
 }
 
+// 参考视频数量上限：Seedance 最多 3 段；可灵 v3-omni 原生 video_list 至多 1 段。
+export function maxReferenceVideos(model: VideoModel): number {
+  if (isSeedanceModel(model)) return 3;
+  if (model === "v3-omni") return 1;
+  return 0;
+}
+
 export function supportsReferenceMedia(model: VideoModel): boolean {
   return model === "v3-omni" || isSeedanceModel(model);
 }

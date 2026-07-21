@@ -323,6 +323,75 @@ export async function extractVideoFrames(
 }
 
 /**
+ * Capture a single full-resolution frame from a video at time `t` (seconds) as
+ * a JPEG File — used by the "extract frame" feature to turn a reference video's
+ * first/last frame, or a generated clip's final frame, into a picture that can
+ * be dropped straight into a start/end/reference slot. Unlike
+ * extractVideoFrames this keeps the video's native pixel size (frame slots
+ * enforce their own 300-6000px / 0.4-2.5 ratio limits downstream) and returns a
+ * File so it flows through the same prepareImageAsset path as an uploaded image.
+ *
+ * Throws "无法读取该视频（可能是跨域直链）…" when the source is a cross-origin
+ * remote URL whose server sends no CORS headers: drawing it taints the canvas
+ * and toBlob/toDataURL then throws a SecurityError. Callers should point the
+ * user at the locally-saved copy (blob URL / same-origin output) instead.
+ * Browser-only.
+ */
+export async function captureVideoFrameAt(
+  src: string,
+  t: number,
+  quality = 0.92,
+): Promise<File> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.crossOrigin = "anonymous";
+  video.src = src;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("视频解码失败"));
+    });
+    const duration = video.duration;
+    if (!Number.isFinite(duration) || duration <= 0) throw new Error("无法读取视频时长");
+
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h) throw new Error("无法读取视频尺寸");
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("无法创建画布上下文");
+
+    // Clamp a hair inside [0, duration] so seeking to the very last frame still
+    // resolves onseeked (an exact-end seek can hang on some decoders).
+    const target = Math.min(Math.max(t, 0), Math.max(0, duration - 0.05));
+    await new Promise<void>((resolve, reject) => {
+      video.onseeked = () => resolve();
+      video.onerror = () => reject(new Error("视频解码失败"));
+      video.currentTime = target;
+    });
+
+    ctx.drawImage(video, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((resolve) => {
+      try {
+        canvas.toBlob((b) => resolve(b), "image/jpeg", quality);
+      } catch {
+        // Tainted canvas (cross-origin source without CORS) throws synchronously.
+        resolve(null);
+      }
+    });
+    if (!blob) throw new Error("无法读取该视频（可能是跨域直链），请使用已保存到本地的视频再提取");
+    return new File([blob], `frame-${Math.round(target * 1000)}.jpg`, { type: "image/jpeg" });
+  } finally {
+    video.removeAttribute("src");
+    video.load();
+  }
+}
+
+/**
  * Composite one local-repaint result block back onto the original image at its
  * bounding box: stretch the (arbitrary-size) result into the bbox, gate its
  * edges through the matching crop of the feathered alpha mask

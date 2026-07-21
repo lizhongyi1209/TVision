@@ -41,6 +41,7 @@ export function ImageNode() {
   const progress = useStudio((s) => s.progress);
   const reduce = useReducedMotion();
   const busy = phase === "submitting" || phase === "running";
+  const highlighted = menuOpen;
 
   const mvX = useMotionValue(0);
   const mvY = useMotionValue(0);
@@ -84,11 +85,11 @@ export function ImageNode() {
       <div
         className={cn(
           "pointer-events-none absolute inset-0 rounded-panel ring-1 transition-all duration-300",
-          menuOpen ? "ring-accent/70" : "ring-white/10",
+          highlighted ? "ring-accent/70" : "ring-white/10",
         )}
       />
 
-      {!busy && !menuOpen && !activeActionId && !inpaintMask ? (
+      {!busy && !highlighted && !activeActionId && !inpaintMask ? (
         <motion.div
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}

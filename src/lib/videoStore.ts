@@ -10,9 +10,10 @@ import {
   allowedVideoResolutions,
   isSeedanceModel,
   maxReferenceImages,
+  maxReferenceVideos,
   supportsShots,
 } from "./videoGateway";
-import type { AspectRatio, ShotSegment, VideoHistoryItem, VideoModel, VideoResolution } from "./videoTypes";
+import type { AspectRatio, ShotSegment, VideoHistoryItem, VideoModel, VideoReferType, VideoResolution } from "./videoTypes";
 
 export type VideoPhase = "idle" | "uploading" | "submitting" | "running" | "success" | "error";
 
@@ -27,10 +28,9 @@ function revokePreview(url: string | undefined) {
   if (url && typeof URL !== "undefined") URL.revokeObjectURL(url);
 }
 
-const DEFAULT_MODEL: VideoModel = "v3";
+const DEFAULT_MODEL: VideoModel = "seedance-2.0";
 const DEFAULT_MODE: VideoResolution = "720p";
-// frameMode 初始为 "refs"（多图参考），宽高比默认须与之配套（智能会被拦截）
-const DEFAULT_RATIO: AspectRatio  = "9:16";
+const DEFAULT_RATIO: AspectRatio  = "智能";
 
 export interface VideoState {
   // ── 参数 ──────────────────────────────────────────────────────────
@@ -47,6 +47,10 @@ export interface VideoState {
   /** Seedance：随机种子输入框原文（空串 = 不传 seed）。 */
   seedText:       string;
   aspectRatio:    AspectRatio;
+  /** 可灵 v3-omni 参考视频用途（feature=视频参考；base=视频编辑）。 */
+  referType:      VideoReferType;
+  /** 可灵 v3-omni 参考视频是否保留原声（默认 false）。 */
+  keepOriginalSound: boolean;
   // 多段分镜
   shotsEnabled:   boolean;
   shots:          ShotSegment[];
@@ -91,6 +95,8 @@ export interface VideoState {
   setCameraFixed:  (b: boolean) => void;
   setSeedText:     (s: string) => void;
   setAspectRatio:  (r: AspectRatio) => void;
+  setReferType:    (t: VideoReferType) => void;
+  setKeepOriginalSound: (b: boolean) => void;
   toggleShots:     () => void;
   setShots:        (shots: ShotSegment[]) => void;
   setFrameMode:    (m: FrameMode) => void;
@@ -128,6 +134,8 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   cameraFixed:    false,
   seedText:       "",
   aspectRatio:    DEFAULT_RATIO,
+  referType:      "feature",
+  keepOriginalSound: false,
   shotsEnabled:   false,
   shots:          [],
   frameMode:      "refs",
@@ -159,6 +167,12 @@ export const useVideoStore = create<VideoState>((set, get) => ({
       s.refImages.slice(max).forEach((item) => revokePreview(item.previewUrl));
       return s.refImages.slice(0, max);
     })(),
+    refVideos: (() => {
+      // 切模型时按新模型的参考视频上限裁剪（Seedance 3 → omni 1），回收多余预览。
+      const max = maxReferenceVideos(m);
+      s.refVideos.slice(max).forEach((item) => revokePreview(item.previewUrl));
+      return s.refVideos.slice(0, max);
+    })(),
   })),
   setMode:        (m) => set({ mode: m }),
   setDuration:    (n) => set({ duration: n }),
@@ -171,6 +185,8 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   // 只允许数字字符，避免提交时才报「种子必须是整数」。
   setSeedText:    (s) => set({ seedText: s.replace(/[^\d]/g, "").slice(0, 10) }),
   setAspectRatio: (r) => set({ aspectRatio: r }),
+  setReferType:   (t) => set({ referType: t }),
+  setKeepOriginalSound: (b) => set({ keepOriginalSound: b }),
   toggleShots:    () => set((s) => {
     if (!supportsShots(s.model)) return { shotsEnabled: false };
     const next = !s.shotsEnabled;
@@ -210,7 +226,9 @@ export const useVideoStore = create<VideoState>((set, get) => ({
   // 时长合规性（单段 2-15s、总长 ≤15s）在提交时统一校验。
   addRefVideo:    (f) => {
     const state = get();
-    if (state.refVideos.length >= 3) return "参考视频最多 3 个";
+    const max = maxReferenceVideos(state.model);
+    if (max === 0) return "当前模型不支持参考视频";
+    if (state.refVideos.length >= max) return `参考视频最多 ${max} 个`;
     set({ refVideos: [...state.refVideos, f] });
     return null;
   },

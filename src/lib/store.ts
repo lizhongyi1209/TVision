@@ -30,6 +30,7 @@ export type Phase = "idle" | "submitting" | "running" | "success" | "error";
  *  Studio-image-handoff effect need to read, and putting it here avoids those
  *  stores having to import from Studio.tsx. */
 export type WorkMode = "single" | "task" | "batch" | "agent" | "templates" | "video" | "history";
+
 export interface ToastMsg {
   id: number;
   kind: "info" | "error" | "success";
@@ -96,6 +97,14 @@ interface StudioState {
    *  the user retries a failed analysis by clicking the same pill again —
    *  activeActionId alone wouldn't change in that case. */
   visionRequestId: number;
+  /** The visionRequestId whose analysis has already finished (or failed).
+   *  GenerateBar's effect only starts a fetch while visionRequestId is ahead
+   *  of this — without it, loading a workspace snapshot (multi-canvas tab
+   *  switch) whose action is still 视觉反推 would re-trigger a fresh analysis
+   *  on every switch-back and clobber the user's edited prompt. Side effect
+   *  (deliberate): cropping the canvas while a completed 视觉反推 is active no
+   *  longer silently re-analyzes — re-click the action to re-run instead. */
+  visionCompletedRequestId: number;
 
   params: GenParams;
 
@@ -172,7 +181,7 @@ interface StudioState {
 
 let toastSeq = 1;
 
-export const useStudio = create<StudioState>((set) => ({
+export const useStudio = create<StudioState>((set, get) => ({
   workMode: "single",
 
   image: null,
@@ -190,6 +199,7 @@ export const useStudio = create<StudioState>((set) => ({
   visionStartedAt: null,
   visionError: null,
   visionRequestId: 0,
+  visionCompletedRequestId: 0,
 
   params: { ...DEFAULT_PARAMS },
 
@@ -358,9 +368,24 @@ export const useStudio = create<StudioState>((set) => ({
   updateParams: (p) => set((s) => ({ params: { ...s.params, ...p } })),
   beginVisionAnalysis: () => set({ analyzingVision: true, visionProgress: 0, visionStartedAt: Date.now(), visionError: null }),
   setVisionProgress: (n) => set({ visionProgress: n }),
-  finishVisionAnalysis: () => set({ analyzingVision: false, visionProgress: 1, visionStartedAt: null }),
+  finishVisionAnalysis: () =>
+    set((s) => ({
+      analyzingVision: false,
+      visionProgress: 1,
+      visionStartedAt: null,
+      visionCompletedRequestId: s.visionRequestId,
+    })),
   failVisionAnalysis: (msg) =>
-    set({ analyzingVision: false, visionProgress: 0, visionStartedAt: null, visionError: msg }),
+    set((s) => ({
+      analyzingVision: false,
+      visionProgress: 0,
+      visionStartedAt: null,
+      visionError: msg,
+      // A failed request also counts as handled: retry is an explicit
+      // re-click of the action (chooseAction bumps visionRequestId), not a
+      // silent re-fire on the next tab switch-back.
+      visionCompletedRequestId: s.visionRequestId,
+    })),
 
   setJobIds: (ids) => set({ jobIds: ids }),
   beginSubmit: () =>

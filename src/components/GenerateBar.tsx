@@ -3,11 +3,12 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { getAction } from "@/lib/actions";
+import { generate } from "@/lib/generate";
 import { diag } from "@/lib/logStore";
 import { ASPECT_RATIOS, BILLINGS, comboError, GPT_IMAGE_2_RATIOS, MODELS, QUALITY_OPTIONS, resolutionsFor } from "@/lib/models";
 import { useStudio } from "@/lib/store";
-import type { Billing, InpaintJob, ModelName, Quality, Resolution } from "@/lib/types";
-import { cn, cropImageToDataURL, downscaleImageSrc, fakeVisionProgressCurve } from "@/lib/utils";
+import type { Billing, ModelName, Quality, Resolution } from "@/lib/types";
+import { cn, downscaleImageSrc, fakeVisionProgressCurve } from "@/lib/utils";
 import { VISION_MODELS } from "@/lib/visionModels";
 import { Icon } from "./icons";
 import { ModelIcon } from "./modelIcons";
@@ -20,7 +21,6 @@ export function GenerateBar() {
   const activeActionId = useStudio((s) => s.activeActionId);
   const refImages = useStudio((s) => s.refImages);
   const inpaintMask = useStudio((s) => s.inpaintMask);
-  const setInpaintJob = useStudio((s) => s.setInpaintJob);
   const openBrushPanel = useStudio((s) => s.openBrushPanel);
   const clearInpaint = useStudio((s) => s.clearInpaint);
   const cancelAction = useStudio((s) => s.cancelAction);
@@ -32,13 +32,8 @@ export function GenerateBar() {
   const setVisionProgress = useStudio((s) => s.setVisionProgress);
   const finishVisionAnalysis = useStudio((s) => s.finishVisionAnalysis);
   const failVisionAnalysis = useStudio((s) => s.failVisionAnalysis);
-  const settings = useStudio((s) => s.settings);
   const openSettings = useStudio((s) => s.openSettings);
   const showToast = useStudio((s) => s.showToast);
-  const beginSubmit = useStudio((s) => s.beginSubmit);
-  const setJobIds = useStudio((s) => s.setJobIds);
-  const setPhase = useStudio((s) => s.setPhase);
-  const setError = useStudio((s) => s.setError);
 
   const action = getAction(activeActionId);
   const busy = phase === "submitting" || phase === "running";
@@ -67,6 +62,14 @@ export function GenerateBar() {
   useEffect(() => {
     const currentAction = getAction(activeActionId);
     if (!currentAction?.visionAnalysis || !image) return;
+    // Multi-canvas guard: restoring a workspace snapshot re-fires this effect
+    // (its deps all change), so only run while the current request id hasn't
+    // completed yet — otherwise every tab switch-back would re-analyze and
+    // clobber the (possibly hand-edited) prompt. An analysis that was aborted
+    // mid-flight by switching away still trails visionCompletedRequestId, so
+    // it auto-restarts here on switch-back. See store.ts's field doc.
+    const { visionRequestId: pendingId, visionCompletedRequestId: handledId } = useStudio.getState();
+    if (pendingId <= handledId) return;
     if (!useStudio.getState().settings?.hasApiKey) {
       showToast("error", "请先在设置里填入 o1key 令牌");
       openSettings();
@@ -170,162 +173,7 @@ export function GenerateBar() {
     updateParams({ model, resolution, billing, aspectRatio });
   }
 
-  async function generate() {
-    if (!image) return;
-    if (action?.textToImage && !params.prompt.trim()) {
-      showToast("error", "请先完成视觉反推或输入提示词");
-      return;
-    }
-    if (!settings?.hasApiKey) {
-      showToast("error", "请先在设置里填入 o1key 令牌");
-      openSettings();
-      return;
-    }
-    if (needsRefMissing) {
-      showToast("error", action?.refLabel || "请先上传参考图");
-      return;
-    }
-    if (requiredMaskMissing) {
-      showToast("error", "请先涂抹要移除的物品");
-      openBrushPanel(true);
-      return;
-    }
-    if (cErr) {
-      showToast("error", cErr);
-      return;
-    }
-
-    // Local repaint (brush selection active): crop just the padded bbox and
-    // submit that instead of the full canvas image; aspectRatio is forced to
-    // "auto" since the crop's own arbitrary aspect ratio must not get stretched
-    // to whatever ratio the (unrelated, now-disabled) selector last held.
-    let submitImage = image.src;
-    let submitAspect = params.aspectRatio;
-    let pendingInpaintJob: InpaintJob | null = null;
-    const submitSnapshot = {
-      imageSrc: image.src,
-      actionId: activeActionId,
-      mask: inpaintMask,
-    };
-    if (inpaintMask) {
-      if (!params.prompt.trim()) {
-        showToast("error", "请先在对话框写明这块区域要改成什么");
-        return;
-      }
-      try {
-        const cropped = await cropImageToDataURL(
-          image.src,
-          { x: inpaintMask.bboxPx.x, y: inpaintMask.bboxPx.y, width: inpaintMask.bboxPx.w, height: inpaintMask.bboxPx.h },
-          0.92,
-        );
-        submitImage = cropped.dataUrl;
-        if (Math.max(cropped.width, cropped.height) > 2048) {
-          submitImage = (await downscaleImageSrc(cropped.dataUrl, 2048, 0.92)).dataUrl;
-        }
-        submitAspect = "auto";
-        // Snapshot now, not read live at composite time: if the user reopens
-        // the brush panel while this job is still running, inpaintMask could
-        // change before results land — the composite step must use the mask
-        // that was actually submitted.
-        pendingInpaintJob = { origSrc: image.src, bboxPx: inpaintMask.bboxPx, maskUrl: inpaintMask.maskUrl };
-        diag(
-          "info",
-          action?.label ?? "局部重绘",
-          `提交${action?.label ?? "局部重绘"}`,
-          JSON.stringify(
-            {
-              bboxAreaRatio: Number(
-                ((inpaintMask.bboxPx.w * inpaintMask.bboxPx.h) / (image.width * image.height)).toFixed(3),
-              ),
-              promptLength: params.prompt.trim().length,
-            },
-            null,
-            2,
-          ),
-        );
-      } catch {
-        showToast("error", "裁剪涂抹区域失败，请重试");
-        return;
-      }
-    } else if (!action?.textToImage) {
-      try {
-        submitImage = (await downscaleImageSrc(image.src, 1800, 0.94)).dataUrl;
-      } catch {
-        showToast("error", "读取图片失败，请重试");
-        return;
-      }
-    }
-
-    // Cropping/downscaling can take noticeable time for large images. If the
-    // user cancels, changes the image, or repaints the mask during that await,
-    // discard this stale submission before it can create a billable job.
-    const latest = useStudio.getState();
-    if (
-      latest.image?.src !== submitSnapshot.imageSrc ||
-      latest.activeActionId !== submitSnapshot.actionId ||
-      latest.inpaintMask !== submitSnapshot.mask
-    ) {
-      diag("info", "提交", "已取消过期的生成请求", "图片或编辑选区在预处理期间发生变化");
-      return;
-    }
-    if (pendingInpaintJob) setInpaintJob(pendingInpaintJob);
-
-    beginSubmit();
-    diag(
-      "info",
-      "提交",
-      "提交生成请求",
-      JSON.stringify(
-        {
-          action: inpaintMask ? (action?.label ?? "局部重绘") : (action?.label ?? "自由提示词"),
-          model: params.model,
-          resolution: params.resolution,
-          aspectRatio: submitAspect,
-          billing: params.billing,
-          count: params.count,
-          quality: params.model === "GPT Image 2" ? params.quality : undefined,
-          refs: refImages.length,
-        },
-        null,
-        2,
-      ),
-    );
-    try {
-      const res = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: params.prompt,
-          model: params.model,
-          resolution: params.resolution,
-          aspectRatio: submitAspect,
-          billing: params.billing,
-          count: params.count,
-          quality: params.model === "GPT Image 2" ? params.quality : undefined,
-          baseImage: action?.textToImage ? undefined : submitImage,
-          refImages: refImages.length && !inpaintMask ? refImages : undefined,
-          textOnly: action?.textToImage || undefined,
-        }),
-      }).then((r) => r.json());
-
-      if (res.error) {
-        setError(res.error);
-        setPhase("error");
-        showToast("error", res.error);
-        diag("error", "提交", "提交失败", res.error);
-        return;
-      }
-      const ids = (res.jobs as { id: string }[]).map((j) => j.id);
-      setJobIds(ids);
-      setPhase("running");
-      diag("info", "提交", `已创建 ${ids.length} 个任务`, ids.join("\n"));
-    } catch (e) {
-      setError((e as Error).message);
-      setPhase("error");
-      showToast("error", "提交失败，请检查网络");
-      diag("error", "提交", "提交失败，请检查网络", (e as Error)?.message || String(e));
-    }
-  }
+  // The submit flow itself lives in lib/generate.ts.
 
   if (!image) return null;
 

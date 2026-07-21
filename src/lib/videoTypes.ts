@@ -6,6 +6,10 @@ export type VideoModel = KlingModel | SeedanceModel;
 export type VideoResolution = "480p" | "720p" | "1080p" | "4K";
 export type AspectRatio = "智能" | "16:9" | "4:3" | "1:1" | "3:4" | "9:16" | "21:9";
 
+/** 可灵 v3-omni 参考视频用途：feature=视频参考（默认，参考内容/风格/运镜生成新镜头）；
+ *  base=视频编辑（在原视频上增删改内容，此时不支持分镜且 sound 强制 off）。 */
+export type VideoReferType = "feature" | "base";
+
 export interface ShotSegment {
   /** 分镜序号（1-based）。 */
   index: number;
@@ -35,8 +39,12 @@ export interface VideoJobParams {
   tailUrl?:      string;
   /** 多模态参考图 public_url 列表；Seedance 最多 9 张，Kling Omni 最多 7 张。 */
   refUrls?:      string[];
-  /** Seedance 参考视频 public_url 列表（最多 3 个）。 */
+  /** 参考视频 public_url 列表；Seedance 最多 3 个，可灵 v3-omni 至多 1 段。 */
   videoUrls?:    string[];
+  /** 可灵 v3-omni 参考视频用途（默认 feature）；仅在 videoUrls 非空时透传。 */
+  referType?:    VideoReferType;
+  /** 可灵 v3-omni 参考视频是否保留原声（默认 false=no）；仅在 videoUrls 非空时透传。 */
+  keepOriginalSound?: boolean;
   /** Seedance 参考音频 public_url 列表（最多 3 段）。 */
   audioUrls?:    string[];
   /** 分镜段列表；非空时 prompt 字段可为空。 */

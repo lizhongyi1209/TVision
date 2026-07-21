@@ -8,6 +8,11 @@
 #
 # 独立服务器上想用 Caddy 自动 HTTPS 的话，见 git 历史里带 caddy 服务的版本。
 
+# 显式锁定 Compose 项目名，避免依赖当前目录名（历史部署曾用 o1key-vision-workbench，
+# 与目录名 tvision 不一致，裸跑 docker compose 会误建空卷/撞端口）。锁死后，
+# 无论在哪个目录、加不加 -p，都指向同一套容器和 tvision_tvision-data 数据卷。
+name: tvision
+
 services:
   app:
     build: .
@@ -22,4 +27,8 @@ services:
       - "127.0.0.1:3002:3000"
 
 volumes:
+  # 卷由数据迁移时手动建好并灌入历史数据（原 o1key-vision-workbench_tvision-data），
+  # external 让 Compose 直接采用它、不再尝试自建（否则会告警）。完整名 = 项目名_键名 = tvision_tvision-data。
   tvision-data:
+    external: true
+    name: tvision_tvision-data

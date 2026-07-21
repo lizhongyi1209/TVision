@@ -98,9 +98,10 @@ export interface SelectOption {
 }
 
 /** Custom listbox replacing the native <select>: same API, but the menu is a
- *  glass panel with icons/hints/check marks instead of the OS dropdown. Both
- *  bars that use it sit at the bottom of the viewport, so the menu measures
- *  free space on open and flips upward when the room below runs out. */
+ *  glass panel with icons/hints/check marks instead of the OS dropdown. Its
+ *  bottom-of-viewport consumers (GenerateBar, VideoBar, the Agent composer)
+ *  rely on the menu measuring free space on open and flipping upward when the
+ *  room below runs out. */
 export function Select({
   value,
   onChange,

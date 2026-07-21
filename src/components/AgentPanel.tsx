@@ -124,33 +124,12 @@ function AgentSidebar() {
   );
 }
 
-// ── Right pane: model bar + message stream + composer ───────────────────────
+// ── Right pane: message stream + composer (model/reasoning picked in the
+//    composer's tool row, see AgentComposer) ─────────────────────────────────
 
 function AgentChatArea() {
-  const model = useAgentChat((s) => s.model);
-  const setModel = useAgentChat((s) => s.setModel);
-  const effort = useAgentChat((s) => s.effort);
-  const setEffort = useAgentChat((s) => s.setEffort);
-  const streaming = useAgentChat((s) => s.streaming);
-
   return (
     <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center justify-end gap-2 border-b border-line px-4">
-        <Select
-          value={effort}
-          onChange={(v) => setEffort(v as ReasoningLevel)}
-          disabled={streaming}
-          options={REASONING_LEVELS.map((lv) => ({ value: lv, label: REASONING_LEVEL_LABELS[lv] }))}
-          className="w-[112px]"
-        />
-        <Select
-          value={model}
-          onChange={setModel}
-          disabled={streaming}
-          options={AGENT_MODELS.map((m) => ({ value: m.id, label: m.label }))}
-          className="w-[200px]"
-        />
-      </div>
       <AgentMessages />
       <AgentComposer />
     </div>
@@ -541,6 +520,9 @@ function AgentComposer() {
   const stop = useAgentChat((s) => s.stop);
   const streaming = useAgentChat((s) => s.streaming);
   const model = useAgentChat((s) => s.model);
+  const setModel = useAgentChat((s) => s.setModel);
+  const effort = useAgentChat((s) => s.effort);
+  const setEffort = useAgentChat((s) => s.setEffort);
   const webSearch = useAgentChat((s) => s.webSearch);
   const setWebSearch = useAgentChat((s) => s.setWebSearch);
   const showToast = useStudio((s) => s.showToast);
@@ -750,7 +732,7 @@ function AgentComposer() {
           onDragLeave={() => setDrag(false)}
           onDrop={onDrop}
           className={cn(
-            "flex items-end gap-2 rounded-panel border bg-panel-2/60 p-2 transition-colors",
+            "flex flex-col gap-2 rounded-panel border bg-panel-2/60 p-2 transition-colors",
             drag ? "border-accent bg-accent/5" : "border-line",
           )}
         >
@@ -765,29 +747,6 @@ function AgentComposer() {
               e.target.value = "";
             }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
-            aria-label="添加图片或文件"
-            title="图片 / PDF / Word / Excel / 文本代码 / 音频 / 视频"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control text-fg-dim transition-colors hover:bg-white/5 hover:text-fg disabled:opacity-40"
-          >
-            <Icon name={busy ? "CircleNotch" : "Paperclip"} size={18} className={busy ? "animate-spin" : undefined} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setWebSearch(!webSearch)}
-            aria-label="联网搜索"
-            title={webSearch ? "联网搜索：开（回答前会先搜索网页）" : "联网搜索：关"}
-            className={cn(
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-control transition-colors",
-              webSearch ? "bg-accent/15 text-accent" : "text-fg-dim hover:bg-white/5 hover:text-fg",
-            )}
-          >
-            <Icon name="Globe" size={18} weight={webSearch ? "fill" : "regular"} />
-          </button>
-
           <textarea
             ref={textareaRef}
             value={text}
@@ -796,29 +755,77 @@ function AgentComposer() {
             onPaste={onPaste}
             rows={1}
             placeholder="输入消息，可附图片 / PDF / 文档 / 代码 / 音频 / 视频…（Enter 发送，Shift+Enter 换行）"
-            className="max-h-[136px] min-h-9 flex-1 resize-none bg-transparent py-1.5 text-sm leading-5 text-fg placeholder:text-fg-mute focus:outline-none"
+            className="max-h-[136px] min-h-9 w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-5 text-fg placeholder:text-fg-mute focus:outline-none"
           />
 
-          {streaming ? (
+          {/* Tool row under the textarea: attachments / web search, then the
+              reasoning + model pickers. Send/stop is pushed to the right edge
+              with ml-auto. flex-wrap lets the row spill onto a second line on
+              narrow/split windows instead of clipping the send button — every
+              control keeps its intrinsic width (shrink-0). Buttons are h-10 to
+              match Select's fixed height, same pairing as GenerateBar/VideoBar. */}
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={stop}
-              className="flex h-9 shrink-0 items-center gap-1.5 rounded-control bg-white/10 px-3 text-sm text-fg transition-colors hover:bg-white/15"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              aria-label="添加图片或文件"
+              title="图片 / PDF / Word / Excel / 文本代码 / 音频 / 视频"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control text-fg-dim transition-colors hover:bg-white/5 hover:text-fg disabled:opacity-40"
             >
-              <Icon name="StopCircle" size={16} weight="fill" />
-              停止
+              <Icon name={busy ? "CircleNotch" : "Paperclip"} size={18} className={busy ? "animate-spin" : undefined} />
             </button>
-          ) : (
             <button
               type="button"
-              onClick={submit}
-              disabled={!text.trim() && images.length === 0 && files.length === 0}
-              className="flex h-9 shrink-0 items-center gap-1.5 rounded-control bg-accent px-3 text-sm font-medium text-ink transition-colors hover:bg-accent-2 disabled:pointer-events-none disabled:opacity-40"
+              onClick={() => setWebSearch(!webSearch)}
+              aria-label="联网搜索"
+              title={webSearch ? "联网搜索：开（回答前会先搜索网页）" : "联网搜索：关"}
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-control transition-colors",
+                webSearch ? "bg-accent/15 text-accent" : "text-fg-dim hover:bg-white/5 hover:text-fg",
+              )}
             >
-              <Icon name="PaperPlaneRight" size={16} weight="fill" />
-              发送
+              <Icon name="Globe" size={18} weight={webSearch ? "fill" : "regular"} />
             </button>
-          )}
+
+            <div className="mx-1 h-5 w-px shrink-0 bg-line" />
+
+            <Select
+              value={effort}
+              onChange={(v) => setEffort(v as ReasoningLevel)}
+              disabled={streaming}
+              options={REASONING_LEVELS.map((lv) => ({ value: lv, label: REASONING_LEVEL_LABELS[lv] }))}
+              className="w-[104px] shrink-0"
+            />
+            <Select
+              value={model}
+              onChange={setModel}
+              disabled={streaming}
+              options={AGENT_MODELS.map((m) => ({ value: m.id, label: m.label }))}
+              className="w-[176px] shrink-0"
+            />
+
+            {streaming ? (
+              <button
+                type="button"
+                onClick={stop}
+                className="ml-auto flex h-10 shrink-0 items-center gap-1.5 rounded-control bg-white/10 px-3 text-sm text-fg transition-colors hover:bg-white/15"
+              >
+                <Icon name="StopCircle" size={16} weight="fill" />
+                停止
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!text.trim() && images.length === 0 && files.length === 0}
+                className="ml-auto flex h-10 shrink-0 items-center gap-1.5 rounded-control bg-accent px-3 text-sm font-medium text-ink transition-colors hover:bg-accent-2 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Icon name="PaperPlaneRight" size={16} weight="fill" />
+                发送
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
