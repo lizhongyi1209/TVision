@@ -186,12 +186,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function uploadMediaFile(options: {
-  file: Blob & { name?: string };
-  baseUrl: string;
-  apiKey: string;
-}): Promise<{ url: string; kind: UploadMediaKind }> {
-  const { file, baseUrl, apiKey } = options;
+/** 校验 + 读取字节 + 定型（含魔数嗅探纠正声明类型），产出随机文件名。
+ *  R2 直传与上游网关上传共用同一套校验，避免两处逻辑漂移。 */
+async function validateAndReadMedia(
+  file: Blob & { name?: string },
+): Promise<{ bytes: Buffer; spec: MediaSpec; filename: string }> {
   let spec = resolveMediaSpec(file);
   const bytes = Buffer.from(await file.arrayBuffer());
   // 声明类型与真实内容不符时，以魔数嗅探结果为准（同一 kind 内纠正，比如
@@ -203,6 +202,28 @@ export async function uploadMediaFile(options: {
   }
   const filename = `${randomUUID()}.${spec.extension}`;
   validateMediaSignature(bytes, spec.contentType, file.name);
+  return { bytes, spec, filename };
+}
+
+/** 参考素材直传本项目 R2 的 inputs/ 空间，返回上游可抓取的预签名 URL。
+ *  与生成结果（outputs/）分开存放，不进资产列表、不占租户配额。 */
+export async function uploadMediaToR2(options: {
+  file: Blob & { name?: string };
+  uid: string;
+}): Promise<{ url: string; kind: UploadMediaKind }> {
+  const { bytes, spec, filename } = await validateAndReadMedia(options.file);
+  const { putInputObject } = await import("./storage.server.ts");
+  const url = await putInputObject(options.uid, filename, bytes, spec.contentType);
+  return { url, kind: spec.kind };
+}
+
+export async function uploadMediaFile(options: {
+  file: Blob & { name?: string };
+  baseUrl: string;
+  apiKey: string;
+}): Promise<{ url: string; kind: UploadMediaKind }> {
+  const { file, baseUrl, apiKey } = options;
+  const { bytes, spec, filename } = await validateAndReadMedia(file);
 
   const presignResponse = await fetch(`${baseUrl}/v1/storage/presign`, {
     method: "POST",
@@ -234,7 +255,7 @@ export async function uploadMediaFile(options: {
       const response = await fetch(uploadUrl, {
         method: presign.method,
         headers,
-        body: bytes,
+        body: new Uint8Array(bytes),
         signal: withTimeout(180_000),
       });
       if (![200, 201, 204].includes(response.status)) {

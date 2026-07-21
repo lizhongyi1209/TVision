@@ -2,10 +2,18 @@
 
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useStudio } from "@/lib/store";
+import { useStudio, type PlacedImage } from "@/lib/store";
 import { cn, compositeStickersToDataURL, fileToDownscaledDataURL, loadImage } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Button } from "./ui";
+
+/** 画布模式复用（PLAN-BOARD）：传 override 后底图/结果流向由调用方决定，
+ *  不再读写 useStudio 的 image/replaceImage；不传保持单图创作原行为。 */
+export interface StickerPanelOverride {
+  image: PlacedImage;
+  onApply: (res: { dataUrl: string; width: number; height: number }) => void | Promise<void>;
+  onClose: () => void;
+}
 
 interface Sticker {
   id: number;
@@ -41,11 +49,13 @@ function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
 }
 
-export function StickerPanel() {
-  const image = useStudio((s) => s.image);
-  const close = useStudio((s) => s.closeSticker);
+export function StickerPanel({ override }: { override?: StickerPanelOverride }) {
+  const storeImage = useStudio((s) => s.image);
+  const storeClose = useStudio((s) => s.closeSticker);
   const replaceImage = useStudio((s) => s.replaceImage);
   const showToast = useStudio((s) => s.showToast);
+  const image = override?.image ?? storeImage;
+  const close = override?.onClose ?? storeClose;
 
   const boxRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -215,8 +225,12 @@ export function StickerPanel() {
     setApplying(true);
     try {
       const res = await compositeStickersToDataURL(image.src, stickers);
-      replaceImage({ src: res.dataUrl, width: res.width, height: res.height });
-      showToast("success", `贴图完成 · ${res.width}×${res.height}`);
+      if (override) {
+        await override.onApply(res);
+      } else {
+        replaceImage({ src: res.dataUrl, width: res.width, height: res.height });
+        showToast("success", `贴图完成 · ${res.width}×${res.height}`);
+      }
       close();
     } catch {
       showToast("error", "贴图合成失败");

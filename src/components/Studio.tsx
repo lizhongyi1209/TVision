@@ -3,13 +3,14 @@
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useRef } from "react";
 import { useBatchStore } from "@/lib/batchStore";
+import { useBoardStore } from "@/lib/boardStore";
 import { diag, useLogStore } from "@/lib/logStore";
 import { useStudio } from "@/lib/store";
-import { useTaskStore } from "@/lib/taskStore";
 import { compositeInpaintResult, downscaleImageSrc, fakeProgressCurve } from "@/lib/utils";
 import { AgentPanel } from "./AgentPanel";
 import { BatchLightbox } from "./BatchLightbox";
 import { BatchWorkshop } from "./BatchWorkshop";
+import { BoardWorkshop } from "./BoardWorkshop";
 import { BrushPanel } from "./BrushPanel";
 import { CropPanel } from "./CropPanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
@@ -19,6 +20,7 @@ import { HistoryPage } from "./HistoryPage";
 import { Logo } from "./Logo";
 import { ResultView } from "./ResultView";
 import { SettingsPanel } from "./SettingsPanel";
+import { SideNav } from "./SideNav";
 import { Stage } from "./Stage";
 import { StickerPanel } from "./StickerPanel";
 import { TaskWorkshop } from "./TaskWorkshop";
@@ -26,11 +28,10 @@ import { TemplateWorkshop } from "./TemplateWorkshop";
 import { VideoTaskPoller, VideoWorkshop } from "./VideoWorkshop";
 import { Toaster } from "./Toaster";
 import { UserChip } from "./UserChip";
-import { IconButton, Segmented } from "./ui";
+import { IconButton } from "./ui";
 
 export default function Studio() {
   const workMode = useStudio((s) => s.workMode);
-  const setWorkMode = useStudio((s) => s.setWorkMode);
   const image = useStudio((s) => s.image);
   const setImage = useStudio((s) => s.setImage);
   const updateParams = useStudio((s) => s.updateParams);
@@ -49,7 +50,8 @@ export default function Studio() {
 
   const batchModels = useBatchStore((s) => s.models);
   const batchRunState = useBatchStore((s) => s.runState);
-  const taskRunStatus = useTaskStore((s) => s.currentRun?.status);
+  const boardDirtyCount = useBoardStore((s) => s.dirtyIds.length);
+  const boardGenCount = useBoardStore((s) => s.gens.filter((g) => g.status !== "failed").length);
 
   const phase = useStudio((s) => s.phase);
   const jobIds = useStudio((s) => s.jobIds);
@@ -61,7 +63,7 @@ export default function Studio() {
   const setError = useStudio((s) => s.setError);
 
   // Diagnostics / settings are a mutually-exclusive overlay group (both can
-  // appear over any workMode tab, "历史生成" included — it's a regular nav
+  // appear over any workMode tab, "资产" included — it's a regular nav
   // tab now, not an overlay, so it no longer needs a wrapper here).
   // (The settings entry moved into UserChip's dropdown — see openTokenSettings
   // there — so there is no header wrapper for it anymore.)
@@ -313,49 +315,25 @@ export default function Studio() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [batchRunState]);
 
+  // 画布的同款守卫：有未保存改动（防抖窗口内）或生成还在跑时提醒再离开。
+  // 放这里（而非 BoardWorkshop）同批量的理由：引擎在 store 层，切走工作区
+  // 也要继续守。
+  useEffect(() => {
+    if (boardDirtyCount === 0 && boardGenCount === 0) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [boardDirtyCount, boardGenCount]);
+
   return (
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-ink">
       <Grain />
 
       <header className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-line px-4">
         <Logo />
-        <div className="pointer-events-none absolute left-1/2 top-1/2 max-w-[calc(100vw-250px)] -translate-x-1/2 -translate-y-1/2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="pointer-events-auto w-max">
-            <Segmented
-              value={workMode}
-              onChange={setWorkMode}
-              options={[
-                { value: "single", label: "单图创作" },
-                {
-                  value: "task",
-                  label: (
-                    <span className="inline-flex items-center gap-1.5">
-                      任务模式
-                      {taskRunStatus === "queued" || taskRunStatus === "running" ? (
-                        <span className="breathe h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-                      ) : null}
-                    </span>
-                  ),
-                },
-                {
-                  value: "batch",
-                  label: (
-                    <span className="inline-flex items-center gap-1.5">
-                      批量工坊
-                      {batchRunState === "running" ? (
-                        <span className="breathe h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-                      ) : null}
-                    </span>
-                  ),
-                },
-                { value: "agent", label: "Agent" },
-                { value: "templates", label: "模板" },
-                { value: "video", label: "视频创作" },
-                { value: "history", label: "历史生成" },
-              ]}
-            />
-          </div>
-        </div>
         <div className="flex items-center gap-1.5">
           {workMode === "single" && image ? (
             <IconButton name="Plus" label="重新添加图片" onClick={() => setImage(null)} />
@@ -371,12 +349,16 @@ export default function Studio() {
       </header>
 
       <main className="relative flex flex-1 overflow-hidden">
+        {/* 全局左侧导航（原顶栏 Segmented 搬家，见 SideNav.tsx） */}
+        <SideNav />
         {workMode === "single" ? (
-          <>
+          <div className="relative flex flex-1 overflow-hidden">
             <Stage />
             <GenerateBar />
             <ResultView />
-          </>
+          </div>
+        ) : workMode === "board" ? (
+          <BoardWorkshop />
         ) : workMode === "task" ? (
           <TaskWorkshop />
         ) : workMode === "batch" ? (

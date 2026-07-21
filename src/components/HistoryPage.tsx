@@ -1,13 +1,20 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStudio } from "@/lib/store";
 import { useVideoStore } from "@/lib/videoStore";
 import { formatBytes } from "@/lib/utils";
+import {
+  clearDownloadDir,
+  getDownloadDirName,
+  pickDownloadDir,
+  saveToLocal,
+  supportsDirPicker,
+} from "@/lib/localDownload";
 import { Icon } from "./icons";
 import type { HistoryItem } from "@/lib/types";
 
-// 历史生成（独立导航页，原为 HistoryRail 侧栏）：图片与视频生成记录统一列表，
+// 资产（独立导航页，原名「历史生成」，更早是 HistoryRail 侧栏）：图片与视频生成记录统一列表，
 // 数据都来自 /api/history（output/ 目录 + data/video-meta.json sidecar）。
 // 点击图片：载入单图创作画布并还原当时参数，切到单图创作。
 // 点击视频：切到视频创作播放，并还原当时参数。
@@ -140,6 +147,41 @@ export function HistoryPage() {
 
   const isVideo = (it: HistoryItem) => /\.mp4$/i.test(it.name);
 
+  // ── 本地下载 ─────────────────────────────────────────────────────────
+  // Chrome/Edge 走 File System Access API：设置一次下载文件夹后静默写入；
+  // 其他浏览器回退 <a download>（存到浏览器默认下载目录）。
+  const [dirName, setDirName] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  useEffect(() => {
+    getDownloadDirName().then(setDirName);
+  }, []);
+
+  async function chooseDir() {
+    const name = await pickDownloadDir();
+    if (name) {
+      setDirName(name);
+      showToast("success", `下载位置已设为「${name}」，之后点下载即自动保存`);
+    }
+  }
+
+  async function resetDir() {
+    await clearDownloadDir();
+    setDirName(null);
+    showToast("info", "已恢复浏览器默认下载");
+  }
+
+  async function download(it: HistoryItem) {
+    setDownloading(it.name);
+    try {
+      const r = await saveToLocal(it.url, it.name);
+      if (!r.ok) showToast("error", r.error);
+      else if (r.via === "dir") showToast("success", `已保存到「${r.dirName}」：${it.name}`);
+    } finally {
+      setDownloading(null);
+    }
+  }
+
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -155,21 +197,54 @@ export function HistoryPage() {
             <div>
               <div className="flex items-center gap-2.5">
                 <Icon name="Stack" size={20} className="text-accent" />
-                <h1 className="text-lg font-medium text-fg">历史生成</h1>
+                <h1 className="text-lg font-medium text-fg">资产</h1>
                 <span className="text-xs text-fg-mute">{history.length}</span>
               </div>
               <p className="mt-1.5 text-sm text-fg-mute">
                 点击图片载入画布并还原当时参数；点击视频切到视频创作播放并还原当时参数
               </p>
             </div>
-            <button
-              onClick={refresh}
-              className="flex h-9 items-center gap-1.5 rounded-control border border-line px-3 text-xs text-fg-mute transition-colors hover:border-line-2 hover:text-fg"
-              title="刷新"
-            >
-              <Icon name="ArrowClockwise" size={14} />
-              刷新
-            </button>
+            <div className="flex items-center gap-2">
+              {supportsDirPicker() ? (
+                dirName ? (
+                  <div className="flex h-9 items-center gap-1.5 rounded-control border border-line pl-3 pr-1 text-xs text-fg-mute">
+                    <Icon name="DownloadSimple" size={14} />
+                    <span>下载到「{dirName}」</span>
+                    <button
+                      onClick={chooseDir}
+                      className="rounded px-1.5 py-1 transition-colors hover:text-fg"
+                      title="更换下载文件夹"
+                    >
+                      更换
+                    </button>
+                    <button
+                      onClick={resetDir}
+                      className="rounded px-1.5 py-1 transition-colors hover:text-fg"
+                      title="恢复浏览器默认下载"
+                    >
+                      <Icon name="X" size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={chooseDir}
+                    className="flex h-9 items-center gap-1.5 rounded-control border border-line px-3 text-xs text-fg-mute transition-colors hover:border-line-2 hover:text-fg"
+                    title="选择一个本地文件夹，之后点下载即自动保存，无需再确认"
+                  >
+                    <Icon name="Gear" size={14} />
+                    设置下载位置
+                  </button>
+                )
+              ) : null}
+              <button
+                onClick={refresh}
+                className="flex h-9 items-center gap-1.5 rounded-control border border-line px-3 text-xs text-fg-mute transition-colors hover:border-line-2 hover:text-fg"
+                title="刷新"
+              >
+                <Icon name="ArrowClockwise" size={14} />
+                刷新
+              </button>
+            </div>
           </div>
 
           {/* 记录网格 */}
@@ -185,16 +260,26 @@ export function HistoryPage() {
                   <div key={it.name} className="group relative overflow-hidden rounded-control border border-line">
                     <button onClick={() => (isVideo(it) ? pickVideo(it) : pickImage(it))} className="block w-full">
                       {isVideo(it) ? (
-                        /* 视频卡片：黑底 + 播放图标 + 参数摘要 */
-                        <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-black/60">
-                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-accent">
-                            <Icon name="Play" size={18} weight="fill" />
-                          </span>
-                          {it.videoMeta && (
-                            <span className="px-2 text-center text-[10px] leading-relaxed text-fg-mute">
-                              {it.videoMeta.model} · {it.videoMeta.mode} · {it.videoMeta.duration === -1 ? "自动时长" : `${it.videoMeta.duration}s`}
+                        /* 视频卡片：首帧当封面（#t=0.001 让浏览器 seek 到首帧再画出来，
+                           preload=metadata 只拉元数据+首帧，不下载整个视频）+ 播放图标 + 参数摘要 */
+                        <div className="relative aspect-square w-full bg-black/60">
+                          <video
+                            src={`${it.url}#t=0.001`}
+                            preload="metadata"
+                            muted
+                            playsInline
+                            className="h-full w-full object-cover transition group-hover:scale-[1.03]"
+                          />
+                          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2">
+                            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-accent backdrop-blur-sm">
+                              <Icon name="Play" size={18} weight="fill" />
                             </span>
-                          )}
+                            {it.videoMeta && (
+                              <span className="rounded bg-black/45 px-2 text-center text-[10px] leading-relaxed text-fg-mute backdrop-blur-sm">
+                                {it.videoMeta.model} · {it.videoMeta.mode} · {it.videoMeta.duration === -1 ? "自动时长" : `${it.videoMeta.duration}s`}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         /* eslint-disable-next-line @next/next/no-img-element */
@@ -223,6 +308,19 @@ export function HistoryPage() {
                         </span>
                       )}
                     </div>
+
+                    <button
+                      onClick={() => download(it)}
+                      disabled={downloading === it.name}
+                      className="absolute right-10 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-fg-dim opacity-0 backdrop-blur transition hover:text-accent group-hover:opacity-100 disabled:opacity-100"
+                      title={dirName ? `下载到「${dirName}」` : "下载"}
+                    >
+                      <Icon
+                        name={downloading === it.name ? "CircleNotch" : "DownloadSimple"}
+                        size={13}
+                        className={downloading === it.name ? "animate-spin" : undefined}
+                      />
+                    </button>
 
                     <button
                       onClick={() => del(it.name)}

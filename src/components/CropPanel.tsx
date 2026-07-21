@@ -4,10 +4,19 @@ import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactCrop, { centerCrop, makeAspectCrop, type Crop, type PercentCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
-import { useStudio } from "@/lib/store";
-import { cropImageToDataURL } from "@/lib/utils";
+import { useStudio, type PlacedImage } from "@/lib/store";
+import { cropImageToDataURL, type DownscaledImage } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Button, Segmented } from "./ui";
+
+/** 画布模式复用（PLAN-BOARD）：传 override 后完全脱离 useStudio 的
+ *  image/replaceImage —— 裁谁、裁完给谁全由调用方决定；不传则保持单图创作
+ *  原行为。src 需要可读像素（画布传同源 ?bytes=1 地址）。 */
+export interface CropPanelOverride {
+  image: PlacedImage;
+  onApply: (res: DownscaledImage) => void | Promise<void>;
+  onClose: () => void;
+}
 
 const RATIOS: { value: string; label: string; aspect?: number }[] = [
   { value: "free", label: "自由" },
@@ -24,11 +33,13 @@ function centeredCrop(aspect: number, w: number, h: number): PercentCrop {
   return centerCrop(makeAspectCrop({ unit: "%", width: 90 }, aspect, w, h), w, h);
 }
 
-export function CropPanel() {
-  const image = useStudio((s) => s.image);
-  const close = useStudio((s) => s.closeCrop);
+export function CropPanel({ override }: { override?: CropPanelOverride }) {
+  const storeImage = useStudio((s) => s.image);
+  const storeClose = useStudio((s) => s.closeCrop);
   const replaceImage = useStudio((s) => s.replaceImage);
   const showToast = useStudio((s) => s.showToast);
+  const image = override?.image ?? storeImage;
+  const close = override?.onClose ?? storeClose;
 
   const imgRef = useRef<HTMLImageElement>(null);
   const [ratio, setRatio] = useState("1:1");
@@ -86,8 +97,12 @@ export function CropPanel() {
         undefined,
         "image/png",
       );
-      replaceImage({ src: res.dataUrl, width: res.width, height: res.height });
-      showToast("success", `裁剪完成 · ${res.width}×${res.height}`);
+      if (override) {
+        await override.onApply(res);
+      } else {
+        replaceImage({ src: res.dataUrl, width: res.width, height: res.height });
+        showToast("success", `裁剪完成 · ${res.width}×${res.height}`);
+      }
     } catch {
       showToast("error", "裁剪失败");
     } finally {

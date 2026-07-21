@@ -87,7 +87,7 @@ function nodeSummary(node: WorkflowNode): string {
     const refs = node.config.referenceImages?.length || 0;
     return `${node.config.model} · ${node.config.resolution} · ${node.config.aspectRatio === "auto" ? "自动比例" : node.config.aspectRatio} · ${node.config.billing} · ×${node.config.count}${refs ? ` · ${refs} 参考图` : ""}`;
   }
-  return `结果自动进入历史生成${node.config.selectIndex == null ? "" : ` · 选第 ${node.config.selectIndex + 1} 张`}`;
+  return `结果自动进入资产${node.config.selectIndex == null ? "" : ` · 选第 ${node.config.selectIndex + 1} 张`}`;
 }
 
 function statusTone(status?: string): string {
@@ -1099,7 +1099,7 @@ function OutputNodeEditor({ draft, node, onChange }: { draft: EditableWorkflow; 
       ) : null}
       <div className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-white/[0.02] p-2.5 text-[10px] text-fg-dim">
         <Icon name="Check" size={12} className="mt-0.5 shrink-0 text-emerald-300" />
-        <span><span className="block text-fg">结果自动进入历史生成</span><span className="mt-0.5 block leading-relaxed text-fg-mute">同时保留流程、运行和步骤来源，便于回溯。</span></span>
+        <span><span className="block text-fg">结果自动进入资产</span><span className="mt-0.5 block leading-relaxed text-fg-mute">同时保留流程、运行和步骤来源，便于回溯。</span></span>
       </div>
     </InspectorSection>
   );

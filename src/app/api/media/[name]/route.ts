@@ -19,7 +19,11 @@ const TYPES = new Set([".png", ".jpg", ".jpeg", ".webp", ".mp4"]);
 // Serve a generated asset. Ownership check runs against the assets table
 // (per-tenant), so cross-tenant reads 404 even with a guessed filename.
 // S3 mode redirects to a presigned/CDN URL; local mode streams bytes.
-export async function GET(_req: Request, ctx: { params: Promise<{ name: string }> }) {
+// `?bytes=1` forces same-origin byte streaming even in S3 mode — canvas
+// pixel work (画布的裁剪/局部重绘/贴图合成) must not follow a cross-origin
+// redirect, or drawImage taints the canvas and toDataURL throws (R2 CORS
+// isn't guaranteed to be configured).
+export async function GET(req: Request, ctx: { params: Promise<{ name: string }> }) {
   const auth = await requireAuth();
   if (!auth) return NextResponse.json({ error: "未登录" }, { status: 401 });
   const { name } = await ctx.params;
@@ -28,8 +32,23 @@ export async function GET(_req: Request, ctx: { params: Promise<{ name: string }
   if (!TYPES.has(ext)) return new Response("Not found", { status: 404 });
   if (!ownsAsset(auth.uid, safe)) return new Response("Not found", { status: 404 });
 
-  const direct = await presignGet(auth.uid, safe);
-  if (direct) return NextResponse.redirect(direct, 302);
+  // `?bytes=1` 只对图片生效（画布像素工作没有视频场景，mp4 走直链就好 ——
+  // 顺手避免把上百 MB 的视频整段缓冲进应用内存）。字节流响应必须 no-store：
+  // 局部重绘会 PUT 覆盖同名资产，immutable 缓存会让后续像素读取拿到旧图。
+  const wantBytes = new URL(req.url).searchParams.get("bytes") === "1" && ext !== ".mp4";
+  if (!wantBytes) {
+    const direct = await presignGet(auth.uid, safe);
+    // 302 带私有缓存：预签名链接有效期 600s，缓存 300s 意味着画布/资产页
+    // 反复渲染同一张图时，浏览器 5 分钟内不再回源本服务器做鉴权+签名往返
+    //（加载慢的主因之一）。局部重绘的 PUT 覆盖发生在该 URL 首次被展示之前
+    //（落卡前先合成上传），不受此缓存影响。
+    if (direct) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: direct, "Cache-Control": "private, max-age=300" },
+      });
+    }
+  }
 
   const buf = await getObject(auth.uid, safe);
   if (!buf) return new Response("Not found", { status: 404 });
@@ -37,7 +56,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ name: string }
     headers: {
       "Content-Type": contentTypeFor(safe),
       // 内容按文件名不可变，但按租户私有——绝不能进共享缓存
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": wantBytes ? "no-store" : "private, max-age=31536000, immutable",
     },
   });
 }

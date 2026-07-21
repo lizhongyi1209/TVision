@@ -65,6 +65,13 @@ function open(): Database.Database {
       created_at INTEGER NOT NULL,
       PRIMARY KEY (uid, id)
     );
+    CREATE TABLE IF NOT EXISTS boards (
+      uid        TEXT NOT NULL,
+      id         TEXT NOT NULL,
+      data_json  TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (uid, id)
+    );
     CREATE TABLE IF NOT EXISTS jobs (
       uid        TEXT NOT NULL,
       task_id    TEXT NOT NULL,

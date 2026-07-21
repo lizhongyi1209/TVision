@@ -6,6 +6,7 @@
 
 import { useEffect } from "react";
 import { useAuth } from "@/lib/authStore";
+import { useBoardStore } from "@/lib/boardStore";
 import { useTaskStore } from "@/lib/taskStore";
 import { Grain } from "./Grain";
 import { LoginScreen } from "./LoginScreen";
@@ -18,6 +19,8 @@ export function AuthGate() {
   const taskOwnerKey = useTaskStore((s) => s.ownerKey);
   const taskDirty = useTaskStore((s) => s.dirty);
   const resetTasks = useTaskStore((s) => s.reset);
+  const boardOwnerKey = useBoardStore((s) => s.ownerKey);
+  const resetBoards = useBoardStore((s) => s.reset);
   const ownerKey = status === "authed" ? String(user?.id ?? user?.username ?? "unknown") : null;
 
   useEffect(() => {
@@ -35,6 +38,12 @@ export function AuthGate() {
   useEffect(() => {
     if (taskOwnerKey !== ownerKey) resetTasks(ownerKey);
   }, [ownerKey, resetTasks, taskOwnerKey]);
+
+  // 画布同理：换账号即清内存画布 + 作废在途的保存/生成异步写（epoch 机制，
+  // 见 boardStore.reset）。画布进入时才拉列表，无需 task 那样的渲染门。
+  useEffect(() => {
+    if (boardOwnerKey !== ownerKey) resetBoards(ownerKey);
+  }, [ownerKey, resetBoards, boardOwnerKey]);
 
   useEffect(() => {
     if (!taskDirty) return;

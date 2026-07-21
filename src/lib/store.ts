@@ -28,8 +28,11 @@ export type Phase = "idle" | "submitting" | "running" | "success" | "error";
  *  overlays). Kept here rather than in each mode's own store since it's a
  *  low-frequency toggle that both Studio.tsx's top bar and the batch store's
  *  Studio-image-handoff effect need to read, and putting it here avoids those
- *  stores having to import from Studio.tsx. */
-export type WorkMode = "single" | "task" | "batch" | "agent" | "templates" | "video" | "history";
+ *  stores having to import from Studio.tsx. "board" is the free-form infinite
+ *  board workspace（画布，PLAN-BOARD — BoardWorkshop.tsx, state lives in
+ *  src/lib/boardStore.ts）; mode switching moved from the header Segmented to
+ *  the global left SideNav.tsx, same discriminant. */
+export type WorkMode = "single" | "task" | "batch" | "agent" | "templates" | "video" | "history" | "board";
 
 export interface ToastMsg {
   id: number;

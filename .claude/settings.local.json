@@ -303,7 +303,11 @@
       "Bash(tail -5 journal.jsonl)",
       "Read(//usr/local/**)",
       "Read(//root/go/**)",
-      "Bash(find / -maxdepth 5 -iname \"go1.2*\" -type f)"
+      "Bash(find / -maxdepth 5 -iname \"go1.2*\" -type f)",
+      "Bash(sed -i 's/\"历史生成\" included/\"资产\" included/' src/components/Studio.tsx)",
+      "Bash(sed -i 's/从「历史生成」页回放/从「资产」页回放/' src/lib/videoStore.ts)",
+      "Bash(awk -F= '/^S3_/{print $1\"=\"\\($2==\"\"?\"\\(空\\)\":\"\\(已填\\)\"\\)}' .env)",
+      "Bash(npx --yes tsx --test src/lib/__tests__/board.test.ts)"
     ]
   }
 }

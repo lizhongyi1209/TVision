@@ -4,10 +4,20 @@ import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getAction } from "@/lib/actions";
 import { diag } from "@/lib/logStore";
-import { useStudio } from "@/lib/store";
+import { useStudio, type PlacedImage } from "@/lib/store";
+import type { InpaintMask } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Icon } from "./icons";
 import { Button } from "./ui";
+
+/** 画布模式复用（PLAN-BOARD）：传 override 后不再读写 useStudio 的
+ *  image/inpaintMask/activeActionId，确认时把遮罩交给 onApply；不传保持
+ *  单图创作原行为。 */
+export interface BrushPanelOverride {
+  image: PlacedImage;
+  onApply: (mask: InpaintMask) => void;
+  onClose: () => void;
+}
 
 const MIN_SIZE = 0.02; // brush diameter, fraction of the image's short side
 const MAX_SIZE = 0.2;
@@ -63,13 +73,15 @@ function paintStroke(ctx: CanvasRenderingContext2D, s: Stroke, w: number, h: num
 // to bake a feathered natural-resolution alpha mask + padded bounding box into
 // the store (inpaintMask). Generation itself happens later from GenerateBar —
 // this panel only produces the selection.
-export function BrushPanel() {
-  const image = useStudio((s) => s.image);
+export function BrushPanel({ override }: { override?: BrushPanelOverride }) {
+  const storeImage = useStudio((s) => s.image);
   const activeActionId = useStudio((s) => s.activeActionId);
-  const close = useStudio((s) => s.closeBrushPanel);
+  const storeClose = useStudio((s) => s.closeBrushPanel);
   const setInpaintMask = useStudio((s) => s.setInpaintMask);
   const showToast = useStudio((s) => s.showToast);
-  const brushAction = getAction(activeActionId)?.usesBrush ? getAction(activeActionId) : undefined;
+  const image = override?.image ?? storeImage;
+  const close = override?.onClose ?? storeClose;
+  const brushAction = !override && getAction(activeActionId)?.usesBrush ? getAction(activeActionId) : undefined;
   const panelLabel = brushAction?.label ?? "局部重绘";
   const panelIcon = brushAction?.icon ?? "PaintBrush";
 
@@ -218,7 +230,8 @@ export function BrushPanel() {
         h: Math.max(1, Math.round(maxY - minY)),
       };
 
-      setInpaintMask({ maskUrl, bboxPx });
+      if (override) override.onApply({ maskUrl, bboxPx });
+      else setInpaintMask({ maskUrl, bboxPx });
       diag("info", panelLabel, "已标记涂抹区域", `bbox ${bboxPx.w}×${bboxPx.h} @ (${bboxPx.x},${bboxPx.y})`);
       close();
     } catch {

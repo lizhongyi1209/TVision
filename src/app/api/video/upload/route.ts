@@ -6,7 +6,8 @@ import { requireAuth } from "@/lib/auth";
 import { readSettings } from "@/lib/settings";
 import { LIMITS, rateLimit } from "@/lib/rateLimit.server";
 import { resolveBaseUrl } from "@/lib/o1key";
-import { MediaValidationError, uploadMediaFile } from "@/lib/mediaUpload.server";
+import { MediaValidationError, uploadMediaFile, uploadMediaToR2 } from "@/lib/mediaUpload.server";
+import { s3Enabled } from "@/lib/storage.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,13 +26,16 @@ export async function POST(req: Request) {
 
   const file = formData.get("file");
   if (!(file instanceof Blob)) return NextResponse.json({ error: "缺少 file 字段" }, { status: 400 });
-  const baseUrl = resolveBaseUrl(s.route);
   try {
-    const result = await uploadMediaFile({
-      file: file as Blob & { name?: string },
-      baseUrl,
-      apiKey: s.apiKey,
-    });
+    // 配了对象存储就直传本项目 R2（inputs/ 空间，独立于上游网关存储）；
+    // 未配（本地开发）时回退到上游网关的预签名上传，保持可用。
+    const result = s3Enabled
+      ? await uploadMediaToR2({ file: file as Blob & { name?: string }, uid: auth.uid })
+      : await uploadMediaFile({
+          file: file as Blob & { name?: string },
+          baseUrl: resolveBaseUrl(s.route),
+          apiKey: s.apiKey,
+        });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "素材上传失败";

@@ -465,7 +465,7 @@ export function VideoTaskPoller() {
           if (cancelled) return;
           setSuccess(res.videoUrl, playUrl);
           diag("info", "视频轮询", "生成完成", `任务 ID: ${taskId}\n视频 URL: ${res.videoUrl}`);
-          showToast("success", "视频生成完成，已保存到 output 目录，可在「历史生成」中查看");
+          showToast("success", "视频生成完成，已保存到 output 目录，可在「资产」中查看");
           return;
         }
         if (res.status === "failed") {

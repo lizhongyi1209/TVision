@@ -20,6 +20,9 @@ const OUTPUT_DIR = process.env.OUTPUT_DIR
 const S3_ENDPOINT = process.env.S3_ENDPOINT || "";
 const S3_BUCKET = process.env.S3_BUCKET || "";
 const S3_REGION = process.env.S3_REGION || "auto";
+// Top-level folder inside the bucket, so one bucket can host multiple projects
+// (e.g. "tvision" → tvision/outputs/<uid>/<file>). Empty = bucket root.
+const S3_PREFIX = (process.env.S3_PREFIX || "").replace(/^\/|\/$/g, "");
 // Optional CDN/public base for the bucket; when set, media GETs redirect
 // straight to it instead of presigning.
 export const S3_PUBLIC_BASE = (process.env.S3_PUBLIC_BASE || "").replace(/\/$/, "");
@@ -42,8 +45,11 @@ function s3(): S3Client {
   return client;
 }
 
-function objectKey(uid: string, name: string): string {
-  return `outputs/${uid}/${path.basename(name)}`;
+// space 区分「生成结果」(outputs，进资产/配额) 与「用户上传的参考素材输入」
+// (inputs，一次性、不进资产列表、不占配额)。两者都受 S3_PREFIX 项目前缀约束。
+function objectKey(uid: string, name: string, space: "outputs" | "inputs" = "outputs"): string {
+  const key = `${space}/${uid}/${path.basename(name)}`;
+  return S3_PREFIX ? `${S3_PREFIX}/${key}` : key;
 }
 
 function localPath(uid: string, name: string): string {
@@ -112,6 +118,28 @@ export async function presignGet(uid: string, name: string): Promise<string | nu
   if (S3_PUBLIC_BASE) return `${S3_PUBLIC_BASE}/${objectKey(uid, name)}`;
   return getSignedUrl(s3(), new GetObjectCommand({ Bucket: S3_BUCKET, Key: objectKey(uid, name) }), {
     expiresIn: 600,
+  });
+}
+
+// 用户上传的参考素材（视频首/尾帧、参考图）需要一个上游模型服务能抓取的公网
+// URL。存进本项目 R2 的 inputs/ 空间，返回 24h 预签名读链——异步视频任务可能
+// 排队较久，短时链接会在上游抓取前过期，故给足时长（仍远低于 SigV4 7 天上限）。
+const INPUT_URL_TTL = 24 * 60 * 60;
+
+export async function putInputObject(
+  uid: string,
+  name: string,
+  bytes: Buffer,
+  contentType: string,
+): Promise<string> {
+  if (!s3Enabled) throw new Error("未配置对象存储，无法上传参考素材");
+  const key = objectKey(uid, name, "inputs");
+  await s3().send(
+    new PutObjectCommand({ Bucket: S3_BUCKET, Key: key, Body: bytes, ContentType: contentType }),
+  );
+  if (S3_PUBLIC_BASE) return `${S3_PUBLIC_BASE}/${key}`;
+  return getSignedUrl(s3(), new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }), {
+    expiresIn: INPUT_URL_TTL,
   });
 }
 
